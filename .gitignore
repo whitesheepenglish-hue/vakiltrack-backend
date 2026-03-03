@@ -1,0 +1,4 @@
+node_modules/
+ecourt-backend/node_modules/
+ecourt-backend/.git.backup/
+npm-debug.log*
