@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 *.iml
 .gradle
 /local.properties
@@ -13,3 +14,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+=======
+node_modules/
+ecourt-backend/node_modules/
+ecourt-backend/.git.backup/
+npm-debug.log*
+>>>>>>> e1508edb61eaf8ea51f1f29f3d406a79be3e235f
