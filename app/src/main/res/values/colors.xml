@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary_navy">#0D1B2A</color>
+    <color name="accent_gold">#E0A106</color>
+    <color name="dark_blue">#0D2B45</color>
+    <color name="gold">#FACC15</color>
+    <color name="light_gray">#F8FAFC</color>
+    <color name="text_gray">#64748B</color>
+    <color name="border_gray">#E2E8F0</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+
+    <!-- Icon Backgrounds -->
+    <color name="bg_blue_light">#F1F5F9</color>
+    <color name="bg_yellow_light">#FEF9C3</color>
+    <color name="bg_green_light">#DCFCE7</color>
+
+    <!-- Status Colors -->
+    <color name="status_yellow_text">#CA8A04</color>
+    <color name="status_yellow_bg">#FEF9C3</color>
+    <color name="status_green">#15803D</color>
+
+    <!-- Production Purpose Colors -->
+    <color name="purpose_arguments_bg">#E0F2FE</color>
+    <color name="purpose_arguments_text">#0369A1</color>
+    <color name="purpose_evidence_bg">#FFEDD5</color>
+    <color name="purpose_evidence_text">#C2410C</color>
+    <color name="purpose_orders_bg">#DCFCE7</color>
+    <color name="purpose_orders_text">#15803D</color>
+    <color name="purpose_posting_bg">#F1F5F9</color>
+    <color name="purpose_posting_text">#475569</color>
+
+    <!-- Professional Dropdown Colors -->
+    <color name="dropdown_item_text_normal">#1C1C1C</color>
+    <color name="dropdown_item_text_selected">#1565C0</color>
+    <color name="dropdown_item_bg_selected">#E3F2FD</color>
+    <color name="dropdown_item_ripple">#BBDEFB</color>
+</resources>

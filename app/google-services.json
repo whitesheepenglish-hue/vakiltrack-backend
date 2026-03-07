@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "834724730282",
+    "project_id": "vakildisk-13fbd",
+    "storage_bucket": "vakildisk-13fbd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:834724730282:android:693cb1ae542b58571507d3",
+        "android_client_info": {
+          "package_name": "com.adv.vakildisk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCil5kltWVjNhqb2OgW9Y-piffEzH5cZtA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

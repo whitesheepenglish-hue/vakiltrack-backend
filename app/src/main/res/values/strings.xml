@@ -1,0 +1,50 @@
+<resources>
+    <string name="app_name">VakilDisk</string>
+    <string name="daily_case_board">Daily Case Board</string>
+    <string name="adv_info">Adv. S. Ramasamy | Senior</string>
+    <string name="active_cases">Active Cases</string>
+    <string name="next_hearings">Next Hearings</string>
+    <string name="disposed">Disposed</string>
+    <string name="todays_cause_list">Today\'s Cause List</string>
+    <string name="upcoming_hearings">Upcoming Hearings</string>
+    <string name="purpose">PURPOSE</string>
+    <string name="nav_dashboard">BOARD</string>
+    <string name="nav_cases">CASES</string>
+    <string name="nav_juniors">JUNIORS</string>
+    <string name="nav_profile">PROFILE</string>
+    <string name="add_case">Add New Case</string>
+    <string name="add_hearing">Add Hearing Date</string>
+    <string name="add_notes">Add Purpose/Notes</string>
+    <string name="add_junior">Add Junior</string>
+    <string name="next_hearing_label">Next Hearing: %1$s</string>
+    <string name="stage_label">%1$s Stage</string>
+    <string name="assign_junior">Assign Junior</string>
+    <string name="junior_list">Junior Advocates</string>
+
+    <string name="case_info_title">Case Information</string>
+    <string name="case_info_desc">Enter the details below to add a new case to your digital file.</string>
+    <string name="court_info_label">COURT &amp; TYPE</string>
+    <string name="select_district">Select District</string>
+    <string name="case_type">Case Type</string>
+    <string name="case_number">Case Number</string>
+    <string name="year">Year</string>
+    <string name="court_name">Court Name</string>
+    <string name="fetch_from_ecourts">FETCH FROM E-COURTS</string>
+    <string name="client_details_label">CLIENT DETAILS</string>
+    <string name="full_name">Full Name</string>
+    <string name="phone_number">Phone Number</string>
+    <string name="next_hearing_date">Next Hearing Date</string>
+
+    <string name="court_info">COURT INFORMATION</string>
+    <string name="client_details">CLIENT DETAILS</string>
+    <string name="court_name_format">District Court, %1$s</string>
+    <string name="fetching">FETCHING...</string>
+    <string name="fetched_success">FETCHED SUCCESSFULLY</string>
+    <string name="case_stage_format">Current Stage: %1$s</string>
+    <string name="saving">SAVING...</string>
+    <string name="save_case">SAVE CASE</string>
+    <string name="case_added_success">Case added successfully</string>
+    <string name="case_details_fetched">Case details fetched</string>
+    <string name="case_preview_format">Preview: %1$s/%2$s/%3$s</string>
+    <string name="last_synced_format">Last Synced from eCourts: %1$s</string>
+</resources>

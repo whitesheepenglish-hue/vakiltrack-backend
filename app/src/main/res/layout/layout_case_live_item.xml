@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="12dp"
+    app:cardBackgroundColor="@color/white"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="2dp"
+    app:strokeWidth="0dp">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvCaseNo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:text="WP No. 789/2024"
+            android:textColor="@color/primary_navy"
+            android:fontFamily="sans-serif-black"
+            android:textSize="17sp"
+            app:layout_constraintEnd_toStartOf="@id/ivMore"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <ImageView
+            android:id="@+id/ivMore"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:padding="4dp"
+            android:src="@drawable/ic_more_vert"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="@color/text_gray" />
+
+        <TextView
+            android:id="@+id/tvLastSynced"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Last Synced from eCourts: Today, 10:30 AM"
+            android:textColor="@color/text_gray"
+            android:textSize="11sp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/tvCaseNo" />
+
+        <TextView
+            android:id="@+id/tvStageLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_stage_tag"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:text="HEARING"
+            android:textColor="@color/status_yellow_text"
+            android:textSize="10sp"
+            android:fontFamily="sans-serif-black"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/ivMore" />
+
+        <TextView
+            android:id="@+id/tvClientName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Arun Pandian"
+            android:textColor="@color/black"
+            android:fontFamily="sans-serif-medium"
+            android:textSize="15sp"
+            app:layout_constraintEnd_toStartOf="@id/ivChevron"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/tvLastSynced" />
+
+        <ImageView
+            android:id="@+id/ivChevron"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_chevron_right"
+            app:layout_constraintBottom_toBottomOf="@id/tvClientName"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/tvClientName"
+            app:tint="@color/text_gray" />
+
+        <!-- Timeline View (Horizontal) -->
+        <LinearLayout
+            android:id="@+id/timelineContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/tvClientName">
+
+            <include layout="@layout/layout_timeline_step" android:id="@+id/stepFiling"/>
+            <View android:layout_width="0dp" android:layout_height="2dp" android:layout_weight="1" android:background="@color/light_gray" android:layout_marginBottom="12dp"/>
+
+            <include layout="@layout/layout_timeline_step" android:id="@+id/stepAdmission"/>
+            <View android:layout_width="0dp" android:layout_height="2dp" android:layout_weight="1" android:background="@color/light_gray" android:layout_marginBottom="12dp"/>
+
+            <include layout="@layout/layout_timeline_step" android:id="@+id/stepEvidence"/>
+            <View android:layout_width="0dp" android:layout_height="2dp" android:layout_weight="1" android:background="@color/light_gray" android:layout_marginBottom="12dp"/>
+
+            <include layout="@layout/layout_timeline_step" android:id="@+id/stepArguments"/>
+            <View android:layout_width="0dp" android:layout_height="2dp" android:layout_weight="1" android:background="@color/light_gray" android:layout_marginBottom="12dp"/>
+
+            <include layout="@layout/layout_timeline_step" android:id="@+id/stepJudgment"/>
+        </LinearLayout>
+
+        <View
+            android:id="@+id/divider"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:background="@color/light_gray"
+            app:layout_constraintTop_toBottomOf="@id/timelineContainer" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/divider">
+
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_calendar"
+                app:tint="@color/accent_gold" />
+
+            <TextView
+                android:id="@+id/tvNextHearing"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="Next Hearing: 24 Feb 2026"
+                android:textColor="@color/primary_navy"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:id="@+id/tvAssigned"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Adv. Rajesh"
+                android:textColor="@color/text_gray"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</com.google.android.material.card.MaterialCardView>

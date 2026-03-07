@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">வக்கீல்டிஸ்க்</string>
+    <string name="daily_case_board">தினசரி வழக்கு பலகை</string>
+    <string name="adv_info">அட்வகேட் எஸ். ராமசாமி | சீனியர்</string>
+    <string name="active_cases">செயலில் உள்ள வழக்குகள்</string>
+    <string name="next_hearings">அடுத்த விசாரணைகள்</string>
+    <string name="disposed">முடிவுற்றவை</string>
+    <string name="todays_cause_list">இன்றைய வழக்கு பட்டியல்</string>
+    <string name="upcoming_hearings">வரவிருக்கும் விசாரணைகள்</string>
+    <string name="purpose">நோக்கம்</string>
+    <string name="nav_dashboard">பலகை</string>
+    <string name="nav_cases">வழக்குகள்</string>
+    <string name="nav_juniors">ஜூனியர்ஸ்</string>
+    <string name="nav_profile">சுயவிவரம்</string>
+    <string name="add_case">புதிய வழக்கைச் சேர்</string>
+    <string name="add_hearing">விசாரணை தேதியைச் சேர்</string>
+    <string name="add_notes">குறிப்புகளைச் சேர்</string>
+    <string name="next_hearing_label">அடுத்த விசாரணை: %1$s</string>
+    <string name="stage_label">%1$s நிலை</string>
+    <string name="assign_junior">ஜூனியரை நியமிக்கவும்</string>
+    <string name="junior_list">ஜூனியர் வழக்கறிஞர்கள்</string>
+
+    <string name="court_info">நீதிமன்ற தகவல்</string>
+    <string name="client_details">கிளையண்ட் விவரங்கள்</string>
+    <string name="court_name_format">மாவட்ட நீதிமன்றம், %1$s</string>
+    <string name="fetching">பெறுகிறது...</string>
+    <string name="fetched_success">வெற்றிகரமாக பெறப்பட்டது</string>
+    <string name="case_stage_format">தற்போதைய நிலை: %1$s</string>
+    <string name="saving">சேமிக்கப்படுகிறது...</string>
+    <string name="save_case">வழக்கைச் சேமிக்கவும்</string>
+    <string name="case_added_success">வழக்கு வெற்றிகரமாக சேர்க்கப்பட்டது</string>
+    <string name="case_details_fetched">வழக்கு விவரங்கள் பெறப்பட்டன</string>
+    <string name="case_preview_format">முன்னோட்டம்: %1$s/%2$s/%3$s</string>
+    <string name="last_synced_format">ஈ-நீதிமன்றங்களிலிருந்து கடைசியாக ஒத்திசைக்கப்பட்டது: %1$s</string>
+</resources>
