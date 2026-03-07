@@ -3,44 +3,54 @@ const puppeteer = require("puppeteer");
 const cors = require("cors");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
+app.use(express.json());
+
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
+});
 
 app.get("/case", async (req, res) => {
   const caseNumber = req.query.caseNumber;
 
   if (!caseNumber) {
-    return res.json({ error: "Case number required" });
+    return res.status(400).json({ error: "caseNumber query param is required" });
   }
 
+  let browser;
+
   try {
-    const browser = await puppeteer.launch({
+    browser = await puppeteer.launch({
       headless: "new",
-      args: ["--no-sandbox"]
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
     const page = await browser.newPage();
+    await page.goto("https://ecourts.gov.in/ecourts_home/", {
+      waitUntil: "domcontentloaded",
+    });
 
-    await page.goto("https://ecourts.gov.in/ecourts_home/");
-
-    // ⚠️ IMPORTANT:
+    // IMPORTANT:
     // You must inspect website and update selectors below
-
-    // Example fake response (replace later with real scraping)
     const result = {
-      caseNumber: caseNumber,
+      caseNumber,
       nextHearingDate: "05-03-2026",
-      stage: "For Evidence"
+      stage: "For Evidence",
+      source: "https://ecourts.gov.in/ecourts_home/",
     };
 
-    await browser.close();
-
-    res.json(result);
-
+    return res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
 });
