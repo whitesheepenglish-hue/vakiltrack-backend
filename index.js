@@ -28,15 +28,19 @@ function resolveChromeExecutablePath() {
 }
 
 async function launchBrowser() {
-  const browser = await puppeteer.launch({
+  const launchOptions = {
     headless: "new",
-    executablePath: resolveChromeExecutablePath(),
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
     ],
-  });
+  };
+
+  const executablePath = resolveChromeExecutablePath();
+  if (executablePath) launchOptions.executablePath = executablePath;
+
+  const browser = await puppeteer.launch(launchOptions);
 
   return browser;
 }
