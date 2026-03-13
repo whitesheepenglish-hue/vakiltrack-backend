@@ -3,8 +3,7 @@
 # Install dependencies
 npm install
 
-# Install Puppeteer Chrome
-npx puppeteer browsers install chrome
-
-# Create cache directory
-mkdir -p /opt/render/.cache/puppeteer
+# Install Playwright Chromium (browsers cached in Render persistent directory when available)
+export PLAYWRIGHT_BROWSERS_PATH=/opt/render/.cache/ms-playwright
+mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+npx playwright install chromium

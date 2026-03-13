@@ -1,14 +1,16 @@
-const puppeteer = require("puppeteer");
+const { chromium } = require("playwright");
 
 async function launchBrowser() {
-  const browser = await puppeteer.launch({
+  const browser = await chromium.launch({
     headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-    ],
+    args: ["--no-sandbox"],
   });
+
+  const page = await browser.newPage();
+
+  await page.goto("https://services.ecourts.gov.in/");
+
+  console.log("eCourts page opened");
 
   return browser;
 }
