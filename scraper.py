@@ -87,6 +87,46 @@ def _captcha_seems_present(page) -> bool:
     return False
 
 
+def get_captcha(
+    *,
+    url: str = "https://services.ecourts.gov.in/",
+    timeout_ms: int = 30_000,
+    headless: Optional[bool] = None,
+) -> bytes:
+    """
+    Returns a screenshot (bytes) of the captcha image if one is visible on the page.
+
+    Note: eCourts may only render the captcha after specific interactions; this function
+    is best-effort and will raise if no captcha image becomes visible within `timeout_ms`.
+    """
+    if headless is None:
+        headless = os.getenv("ECOURTS_HEADLESS", "1").strip() not in {"0", "false", "False"}
+
+    captcha_selectors = (
+        "img[id*='captcha' i]",
+        "img[src*='captcha' i]",
+        "img[alt*='captcha' i]",
+        "#captcha_image",
+        "#captchaImg",
+    )
+
+    with sync_playwright() as p:
+        launch_args: list[str] = ["--disable-blink-features=AutomationControlled"]
+        if os.name != "nt":
+            launch_args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
+
+        browser = p.chromium.launch(headless=headless, args=launch_args)
+        page = browser.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(2000)
+
+            captcha_img = _pick_first_visible(page, captcha_selectors, timeout_ms=timeout_ms)
+            return captcha_img.screenshot()
+        finally:
+            browser.close()
+
+
 def get_case_status(
     case_number: str,
     *,
@@ -224,4 +264,3 @@ def _main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_main(sys.argv[1:]))
- 
