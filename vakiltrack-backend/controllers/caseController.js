@@ -1,28 +1,28 @@
-const db = require("../config/firebase");
 const scrapeCase = require("../scrapers/ecourtScraper");
 
-exports.trackCase = async (req, res) => {
+exports.getCase = async (req, res) => {
 
   try {
 
-    const { caseNumber } = req.body;
+    const caseNumber = req.query.number;
 
-    const caseData = await scrapeCase(caseNumber);
+    if (!caseNumber) {
+      return res.status(400).json({
+        error: "Case number required"
+      });
+    }
 
-    await db.collection("cases").doc(caseNumber).set({
-      caseNumber,
-      petitioner: caseData.petitioner,
-      respondent: caseData.respondent,
-      nextHearing: caseData.nextHearing,
-      court: caseData.court,
-      updated: new Date()
+    const data = await scrapeCase(caseNumber);
+
+    res.json(data);
+
+  } catch (error) {
+
+    console.error(error);
+
+    res.status(500).json({
+      error: "Failed to fetch case data"
     });
-
-    res.json({ success: true });
-
-  } catch (err) {
-
-    res.status(500).json({ error: err.message });
 
   }
 

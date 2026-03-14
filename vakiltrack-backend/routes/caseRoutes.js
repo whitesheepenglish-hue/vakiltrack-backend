@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 
-const { trackCase } = require("../controllers/caseController");
+const { getCase } = require("../controllers/caseController");
 
-router.post("/track", trackCase);
+router.get("/case", getCase);
 
 module.exports = router;
