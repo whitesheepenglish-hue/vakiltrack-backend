@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 
-const caseController = require("../controllers/caseController");
-
-router.get("/scrape/:caseno",caseController.scrapeAndSave);
+router.get("/", async (req, res) => {
+  res.json({ message: "Cases route working" });
+});
 
 module.exports = router;
