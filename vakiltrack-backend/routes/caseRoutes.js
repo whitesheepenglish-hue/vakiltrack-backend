@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 
-const { getCase } = require("../controllers/caseController");
+const caseController = require("../controllers/caseController");
 
-router.get("/case", getCase);
+router.get("/scrape/:caseno",caseController.scrapeAndSave);
 
 module.exports = router;

@@ -1,0 +1,87 @@
+const mongoose = require("mongoose");
+
+const DEFAULT_URI = "mongodb://127.0.0.1:27017/vakiltrack";
+const DEFAULT_DB_NAME = "vakiltrack";
+
+const assertEncodedCredentials = (uri) => {
+  const value = String(uri || "").trim();
+
+  if (!value.startsWith("mongodb://") && !value.startsWith("mongodb+srv://")) {
+    return;
+  }
+
+  const withoutScheme = value.replace(/^mongodb(?:\+srv)?:\/\//, "");
+  const authority = withoutScheme.split("/")[0] || "";
+
+  // Multiple "@" signs in the authority almost always means the password
+  // contains an unencoded "@" and the URI will be parsed incorrectly.
+  if ((authority.match(/@/g) || []).length > 1) {
+    throw new Error(
+      "MONGO_URI contains an unencoded '@' in the username or password. URL-encode special characters, for example '@' -> '%40'."
+    );
+  }
+};
+
+const normalizeMongoUri = (value) => {
+  const uri = String(value || "").trim();
+
+  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
+    return uri;
+  }
+
+  try {
+    const parsed = new URL(uri);
+    const pathName = parsed.pathname.replace(/^\/+/, "");
+
+    // Atlas connection strings often omit the DB name; default it so models
+    // always land in the expected application database.
+    if (!pathName) {
+      parsed.pathname = `/${DEFAULT_DB_NAME}`;
+    }
+
+    return parsed.toString();
+  } catch {
+    return uri;
+  }
+};
+
+const connectDB = async (mongoUri) => {
+  const envUri = (process.env.MONGO_URI || process.env.MONGODB_URI || "").trim();
+  const uri = normalizeMongoUri(mongoUri || envUri || DEFAULT_URI);
+
+  if (!mongoUri && !envUri) {
+    console.warn(`MONGO_URI not set; defaulting to ${DEFAULT_URI}`);
+  }
+
+  if (uri.includes("<") || uri.includes(">")) {
+    throw new Error("MONGO_URI still contains placeholder values. Paste your real MongoDB Atlas connection string into .env.");
+  }
+
+  assertEncodedCredentials(uri);
+
+  mongoose.set("strictQuery", true);
+
+  try {
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 10_000,
+      serverApi: {
+        version: mongoose.mongo.ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
+    });
+  } catch (err) {
+    if (uri.startsWith("mongodb+srv://") && String(err?.syscall || "") === "querySrv") {
+      err.message = `${err.message} (SRV DNS lookup failed; try a non-SRV MongoDB connection string in MONGO_URI)`;
+    }
+    if (String(err?.message || "").includes("bad auth")) {
+      err.message = `${err.message} (check your Atlas username, password, and whether the password needs URL encoding)`;
+    }
+    throw err;
+  }
+
+  console.log("MongoDB connected");
+  return mongoose.connection;
+};
+
+module.exports = connectDB;

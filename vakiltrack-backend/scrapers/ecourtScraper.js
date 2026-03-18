@@ -1,40 +1,60 @@
 const puppeteer = require("puppeteer");
 
-async function scrapeCase(caseNumber){
+let browser;
+let page;
 
-const browser = await puppeteer.launch({
-  headless: true,
-  args: [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage"
-  ]
-});
+async function startScraper() {
+    console.log("Scraper started...");
 
-const page = await browser.newPage();
+    browser = await puppeteer.launch({
+        headless: false,
+        args: ["--no-sandbox"]
+    });
 
-await page.setUserAgent(
-"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-);
+    page = await browser.newPage();
 
-await page.goto("https://services.ecourts.gov.in/", {
-  waitUntil:"networkidle2"
-});
+    await page.goto("https://services.ecourts.gov.in/ecourtindia_v6/");
 
-await new Promise(r=>setTimeout(r,5000));
+    console.log("Court website opened");
 
-const data = {
-  caseNumber,
-  petitioner:"Sample Petitioner",
-  respondent:"Sample Respondent",
-  nextHearing:"20-04-2026",
-  court:"Chennai District Court"
-};
+    // Wait for captcha element
+    await page.waitForSelector("#captcha_image");
 
-await browser.close();
+    // screenshot captcha
+    const captcha = await page.$("#captcha_image");
+    await captcha.screenshot({ path: "captcha.png" });
 
-return data;
-
+    return "captcha.png";
 }
 
-module.exports = scrapeCase;
+async function submitCaptcha(caseNumber, captchaText) {
+
+    await page.type("#case_no", caseNumber);
+
+    await page.type("#captcha", captchaText);
+
+    await page.click("#searchbtn");
+
+    await page.waitForTimeout(3000);
+
+    const data = await page.evaluate(() => {
+
+        return {
+            caseNumber: document.querySelector("#caseNumber")?.innerText || "",
+            petitioner: document.querySelector("#petitioner")?.innerText || "",
+            respondent: document.querySelector("#respondent")?.innerText || "",
+            nextHearing: document.querySelector("#nextHearing")?.innerText || "",
+            court: "Chennai District Court"
+        };
+
+    });
+
+    const cases = data ? [data] : [];
+    console.log("Fetched cases:", cases.length);
+
+    await browser.close();
+
+    return data;
+}
+
+module.exports = { startScraper, submitCaptcha };

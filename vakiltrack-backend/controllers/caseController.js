@@ -1,29 +1,27 @@
+const Case = require("../models/Case");
 const scrapeCase = require("../scrapers/ecourtScraper");
 
-exports.getCase = async (req, res) => {
+exports.scrapeAndSave = async (req,res)=>{
 
-  try {
+ const caseno = req.params.caseno;
 
-    const caseNumber = req.query.number;
+ const data = await scrapeCase(caseno);
 
-    if (!caseNumber) {
-      return res.status(400).json({
-        error: "Case number required"
-      });
-    }
+ const newCase = new Case({
 
-    const data = await scrapeCase(caseNumber);
+  caseNumber:data.caseNumber,
+  partyName:data.petitioner+" vs "+data.respondent,
+  court:data.court,
+  nextHearingDate:data.nextHearing,
+  lastUpdated:new Date()
 
-    res.json(data);
+ });
 
-  } catch (error) {
+ await newCase.save();
 
-    console.error(error);
-
-    res.status(500).json({
-      error: "Failed to fetch case data"
-    });
-
-  }
+ res.json({
+  message:"Case saved",
+  case:data
+ });
 
 };
