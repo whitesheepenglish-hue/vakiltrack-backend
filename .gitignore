@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 **/node_modules/
+node_modules/.package-lock.json
 
 # Environment variables
 .env
@@ -9,3 +10,6 @@ node_modules/
 !.env.sample
 !.env.template
 
+# Local runtime logs
+*.out
+*.err
