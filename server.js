@@ -9,6 +9,7 @@ try {
   dotenv = null;
 }
 const scrapeCase = require("./scrapers/ecourtScraper");
+const { startScraper } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
 
@@ -59,6 +60,18 @@ app.get("/api/users", (req, res) => {
 // LOGIN
 app.get("/api/login", (req, res) => {
   res.json({ message: "Login API working" });
+});
+
+app.get("/api/captcha", async (req, res) => {
+  try {
+    const imageBuffer = await startScraper();
+
+    res.set("Content-Type", "image/png");
+    res.send(imageBuffer);
+  } catch (error) {
+    console.error("Captcha failed:", error?.message || error);
+    res.status(500).json({ error: "Captcha failed" });
+  }
 });
 
 // SCRAPER

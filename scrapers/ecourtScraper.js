@@ -43,6 +43,34 @@ const getLaunchOptions = () => {
   return options;
 };
 
+async function startScraper() {
+  let browser;
+
+  try {
+    browser = await puppeteer.launch(getLaunchOptions());
+
+    const page = await browser.newPage();
+    await page.goto(ECOURTS_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+
+    await page.waitForSelector("#captcha_image", { timeout: 15_000 });
+
+    const captchaElement = await page.$("#captcha_image");
+    if (!captchaElement) {
+      throw new Error("Captcha image not found");
+    }
+
+    const imageBuffer = await captchaElement.screenshot({ type: "png" });
+    return imageBuffer;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
 async function scrapeCase(caseNumber) {
   const normalizedCaseNumber = normalizeCaseNumber(caseNumber);
 
@@ -79,4 +107,5 @@ async function scrapeCase(caseNumber) {
   }
 }
 
+scrapeCase.startScraper = startScraper;
 module.exports = scrapeCase;
