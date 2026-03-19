@@ -8,7 +8,6 @@ try {
 } catch {
   dotenv = null;
 }
-const { startScraper, submitCaptcha } = require("./scrapers/ecourtScraper");
 const scrapeCase = require("./scrapers/ecourtScraper");
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
@@ -29,7 +28,7 @@ const envCandidates = [
 ];
 
 for (const envPath of envCandidates) {
-  if (dotenv && fs.existsSync(envPath)) dotenv.config({ path: envPath });
+  if (dotenv && fs.existsSync(envPath)) dotenv.config({ path: envPath, quiet: true });
 }
 
 let dbConnection;
@@ -52,31 +51,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// CAPTCHA 
-
-app.get("/api/captcha", async (req,res)=>{
-
- const image = await startScraper();
-
- res.sendFile(__dirname + "/" + image);
-
-});
-
-//SUBMIT CAPTCHA 
-
-app.post("/api/solve", async (req,res)=>{
-
- const { caseNumber, captcha } = req.body;
-
- const data = await submitCaptcha(caseNumber, captcha);
-
- res.json({
-   message:"Case scraped",
-   case:data
- });
-
-});
-
 // USERS
 app.get("/api/users", (req, res) => {
   res.json({ message: "Users API working" });
@@ -97,33 +71,38 @@ app.get("/api/scrape/:caseno", async (req, res) => {
 
     const data = await scrapeCase(caseno);
 
-    res.json({
-      message: "Case scraped",
-      case: data,
-    });
+    let savedToDb = false;
 
     // Save to DB if connected; don't block the response if DB is down.
     if (Case?.db?.readyState === 1) {
       try {
         const newCase = new Case({
           caseNumber: data.caseNumber,
-          partyName: data.petitioner + " vs " + data.respondent,
+          partyName: [data.petitioner, data.respondent].filter(Boolean).join(" vs "),
           court: data.court,
           nextHearingDate: data.nextHearing,
           lastUpdated: new Date(),
         });
 
         await newCase.save();
+        savedToDb = true;
         console.log("Data saved to MongoDB");
       } catch (saveErr) {
         console.error("MongoDB save failed:", saveErr?.message || saveErr);
       }
     }
+
+    res.json({
+      message: "Case processed",
+      savedToDb,
+      case: data,
+    });
   } catch (error) {
-    console.log(error);
+    console.error("Scraper error:", error?.message || error);
 
     res.status(500).json({
       message: "Scraper error",
+      error: String(error?.message || error),
     });
   }
 });

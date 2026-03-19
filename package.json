@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
+    "build": "npm install",
+    "render-build": "bash .render-build.sh",
+    "scrape": "node scripts/runScraper.js",
     "start": "node server.js"
   },
   "dependencies": {

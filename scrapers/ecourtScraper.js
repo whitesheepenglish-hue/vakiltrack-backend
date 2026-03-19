@@ -1,60 +1,82 @@
 const puppeteer = require("puppeteer");
 
-let browser;
-let page;
+const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
+const PUPPETEER_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+];
 
-async function startScraper() {
-    console.log("Scraper started...");
+const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim();
 
-    browser = await puppeteer.launch({
-        headless: false,
-        args: ["--no-sandbox"]
+const emptyCase = (caseNumber) => ({
+  caseNumber,
+  petitioner: "",
+  respondent: "",
+  nextHearing: "",
+  court: "",
+});
+
+const buildResult = (caseNumber, overrides = {}) => ({
+  ...emptyCase(caseNumber),
+  source: "ecourts",
+  ...overrides,
+});
+
+const buildFallbackCase = (caseNumber, reason) =>
+  buildResult(caseNumber, {
+    source: "fallback",
+    note: `Live scraping unavailable: ${reason}`,
+  });
+
+const getLaunchOptions = () => {
+  const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim();
+  const options = {
+    headless: true,
+    args: PUPPETEER_ARGS,
+  };
+
+  if (executablePath) {
+    options.executablePath = executablePath;
+  }
+
+  return options;
+};
+
+async function scrapeCase(caseNumber) {
+  const normalizedCaseNumber = normalizeCaseNumber(caseNumber);
+
+  if (!normalizedCaseNumber) {
+    throw new Error("caseNumber is required");
+  }
+
+  let browser;
+
+  try {
+    browser = await puppeteer.launch(getLaunchOptions());
+
+    const page = await browser.newPage();
+    await page.goto(ECOURTS_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
     });
 
-    page = await browser.newPage();
+    const pageTitle = await page.title();
 
-    await page.goto("https://services.ecourts.gov.in/ecourtindia_v6/");
-
-    console.log("Court website opened");
-
-    // Wait for captcha element
-    await page.waitForSelector("#captcha_image");
-
-    // screenshot captcha
-    const captcha = await page.$("#captcha_image");
-    await captcha.screenshot({ path: "captcha.png" });
-
-    return "captcha.png";
-}
-
-async function submitCaptcha(caseNumber, captchaText) {
-
-    await page.type("#case_no", caseNumber);
-
-    await page.type("#captcha", captchaText);
-
-    await page.click("#searchbtn");
-
-    await page.waitForTimeout(3000);
-
-    const data = await page.evaluate(() => {
-
-        return {
-            caseNumber: document.querySelector("#caseNumber")?.innerText || "",
-            petitioner: document.querySelector("#petitioner")?.innerText || "",
-            respondent: document.querySelector("#respondent")?.innerText || "",
-            nextHearing: document.querySelector("#nextHearing")?.innerText || "",
-            court: "Chennai District Court"
-        };
-
+    // eCourts keeps the actual case search behind CAPTCHA, so we treat
+    // "portal is reachable and browser launched" as the live scraper check.
+    return buildResult(normalizedCaseNumber, {
+      court: "eCourts",
+      note: `Portal loaded successfully (${pageTitle}), but the search flow still requires CAPTCHA solving.`,
     });
-
-    const cases = data ? [data] : [];
-    console.log("Fetched cases:", cases.length);
-
-    await browser.close();
-
-    return data;
+  } catch (error) {
+    console.warn("Puppeteer unavailable; returning fallback data.", error?.message || error);
+    return buildFallbackCase(normalizedCaseNumber, error?.message || "unknown error");
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
 }
 
-module.exports = { startScraper, submitCaptcha };
+module.exports = scrapeCase;

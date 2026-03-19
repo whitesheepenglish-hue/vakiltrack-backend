@@ -1,1 +1,1 @@
-require("./vakiltrack-backend/server");
+require("./server");
