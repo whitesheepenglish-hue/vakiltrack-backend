@@ -26,9 +26,12 @@ const buildFallbackCase = (caseNumber, reason) =>
 
 async function launchBrowser() {
   return puppeteer.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    executablePath: "/opt/render/.cache/puppeteer/chrome/linux-146.0.7680.76/chrome-linux64/chrome",
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    ],
   });
 }
 
