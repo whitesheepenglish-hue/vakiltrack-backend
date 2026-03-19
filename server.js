@@ -1,4 +1,5 @@
 const express = require("express");
+const cors = require("cors");
 const connectDB = require("./config/db");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -40,6 +41,7 @@ try {
 }
 
 app.use(express.json());
+app.use(cors());
 app.use("/api/cases", caseRoutes);
 
 /* ---------------- ROUTES ---------------- */
@@ -65,13 +67,28 @@ app.get("/api/login", (req, res) => {
 app.get("/api/captcha", async (req, res) => {
   try {
     const imageBuffer = await startScraper();
+    const asJson = String(req.query.format || "").toLowerCase() === "json";
 
-    res.set("Content-Type", "image/png");
-    res.send(imageBuffer);
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+
+    if (asJson) {
+      return res.json({
+        contentType: "image/png",
+        imageBase64: imageBuffer.toString("base64"),
+      });
+    }
+
+    res.type("png");
+    return res.send(imageBuffer);
 
   } catch (error) {
-    console.error("CAPTCHA ERROR:", error);   
-    res.status(500).json({ error: error.message }); 
+    console.error("CAPTCHA ERROR:", error);
+    return res.status(500).json({
+      error: error.message,
+      hint: "Make sure Chrome, Edge, or Chromium is installed, or set CHROME_EXECUTABLE_PATH.",
+    });
   }
 });
 
