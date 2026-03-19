@@ -1,12 +1,6 @@
 const puppeteer = require("puppeteer");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
-const PUPPETEER_ARGS = [
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
-  "--disable-dev-shm-usage",
-];
-
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim();
 
 const emptyCase = (caseNumber) => ({
@@ -32,8 +26,13 @@ const buildFallbackCase = (caseNumber, reason) =>
 const getLaunchOptions = () => {
   const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim();
   const options = {
-    headless: true,
-    args: PUPPETEER_ARGS,
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
   };
 
   if (executablePath) {
@@ -57,13 +56,8 @@ async function startScraper() {
 
     await page.waitForSelector("#captcha_image", { timeout: 15_000 });
 
-    const captchaElement = await page.$("#captcha_image");
-    if (!captchaElement) {
-      throw new Error("Captcha image not found");
-    }
-
-    const imageBuffer = await captchaElement.screenshot({ type: "png" });
-    return imageBuffer;
+    const captchaImage = await page.screenshot({ type: "png" });
+    return captchaImage;
   } finally {
     if (browser) {
       await browser.close().catch(() => {});
