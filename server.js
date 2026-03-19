@@ -87,7 +87,7 @@ app.get("/api/captcha", async (req, res) => {
     console.error("CAPTCHA ERROR:", error);
     return res.status(500).json({
       error: error.message,
-      hint: "Make sure Chrome, Edge, or Chromium is installed, or set CHROME_EXECUTABLE_PATH.",
+      hint: "Run the Render build step that installs Puppeteer's browser, or set CHROME_EXECUTABLE_PATH to a valid Chrome/Chromium binary.",
     });
   }
 });

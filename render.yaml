@@ -3,6 +3,6 @@ services:
     name: vakiltrack-backend
     env: node
     plan: free
-    buildCommand: bash .render-build.sh
+    buildCommand: npm run build:render
     startCommand: node server.js
     autoDeploy: true

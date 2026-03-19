@@ -24,9 +24,21 @@ const buildFallbackCase = (caseNumber, reason) =>
     note: `Live scraping unavailable: ${reason}`,
   });
 
+function resolveBrowserPath() {
+  const configuredPath = String(process.env.CHROME_EXECUTABLE_PATH || "").trim();
+  if (configuredPath) {
+    return configuredPath;
+  }
+
+  try {
+    return puppeteer.executablePath();
+  } catch {
+    return undefined;
+  }
+}
+
 async function launchBrowser() {
   return puppeteer.launch({
-    executablePath: "/opt/render/.cache/puppeteer/chrome/linux-146.0.7680.76/chrome-linux64/chrome",
     headless: true,
     args: [
       "--no-sandbox",
