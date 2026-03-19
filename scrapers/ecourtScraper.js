@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const puppeteer = require("puppeteer");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
@@ -5,6 +6,16 @@ const CAPTCHA_SELECTOR = "#captcha_image";
 const BROWSER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
+];
+const KNOWN_BROWSER_PATHS = [
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
 ];
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim();
 
@@ -28,8 +39,52 @@ const buildFallbackCase = (caseNumber, reason) =>
     note: `Live scraping unavailable: ${reason}`,
   });
 
+function getConfiguredBrowserPath() {
+  const configuredPath = String(process.env.CHROME_EXECUTABLE_PATH || "").trim();
+
+  if (!configuredPath) {
+    return undefined;
+  }
+
+  if (fs.existsSync(configuredPath)) {
+    return configuredPath;
+  }
+
+  console.warn(
+    `Ignoring CHROME_EXECUTABLE_PATH because it does not exist: ${configuredPath}`,
+  );
+  return undefined;
+}
+
+function getManagedBrowserPath() {
+  try {
+    const managedPath = puppeteer.executablePath();
+    if (managedPath && fs.existsSync(managedPath)) {
+      return managedPath;
+    }
+  } catch {
+    // Ignore resolution errors and keep trying other candidates.
+  }
+
+  return undefined;
+}
+
+function resolveBrowserPath() {
+  const configuredPath = getConfiguredBrowserPath();
+  if (configuredPath) {
+    return configuredPath;
+  }
+
+  const managedPath = getManagedBrowserPath();
+  if (managedPath) {
+    return managedPath;
+  }
+
+  return KNOWN_BROWSER_PATHS.find((candidatePath) => fs.existsSync(candidatePath));
+}
+
 async function launchBrowser() {
-  const executablePath = process.env.CHROME_EXECUTABLE_PATH || undefined;
+  const executablePath = resolveBrowserPath();
 
   return puppeteer.launch({
     headless: "new",
