@@ -1,4 +1,4 @@
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-core");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim();
@@ -23,30 +23,20 @@ const buildFallbackCase = (caseNumber, reason) =>
     note: `Live scraping unavailable: ${reason}`,
   });
 
-const getLaunchOptions = () => {
-  const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim();
-  const options = {
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-    ],
-  };
-
-  if (executablePath) {
-    options.executablePath = executablePath;
-  }
-
-  return options;
-};
-
 async function startScraper() {
   let browser;
 
   try {
-    browser = await puppeteer.launch(getLaunchOptions());
+    browser = await puppeteer.launch({
+      executablePath: "/usr/bin/chromium-browser",
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
+    });
 
     const page = await browser.newPage();
     await page.goto(ECOURTS_URL, {
@@ -75,7 +65,16 @@ async function scrapeCase(caseNumber) {
   let browser;
 
   try {
-    browser = await puppeteer.launch(getLaunchOptions());
+    browser = await puppeteer.launch({
+      executablePath: "/usr/bin/chromium-browser",
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
+    });
 
     const page = await browser.newPage();
     await page.goto(ECOURTS_URL, {
