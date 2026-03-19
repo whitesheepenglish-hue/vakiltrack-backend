@@ -26,6 +26,7 @@ const buildFallbackCase = (caseNumber, reason) =>
 
 async function launchBrowser() {
   return puppeteer.launch({
+    executablePath: "/opt/render/.cache/puppeteer/chrome/linux-146.0.7680.76/chrome-linux64/chrome",
     headless: true,
     args: [
       "--no-sandbox",
