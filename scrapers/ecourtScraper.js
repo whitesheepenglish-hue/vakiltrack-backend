@@ -1,23 +1,8 @@
-const fs = require("node:fs");
-const puppeteer = require("puppeteer-core");
+const puppeteer = require("puppeteer");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
 const CAPTCHA_SELECTOR = "#captcha_image";
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim();
-
-const BROWSER_CANDIDATES = [
-  process.env.PUPPETEER_EXECUTABLE_PATH,
-  process.env.CHROME_PATH,
-  process.env.CHROME_EXECUTABLE_PATH,
-  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-  "/usr/bin/google-chrome",
-  "/usr/bin/google-chrome-stable",
-  "/usr/bin/chromium-browser",
-  "/usr/bin/chromium",
-].filter(Boolean);
 
 const emptyCase = (caseNumber) => ({
   caseNumber,
@@ -39,28 +24,12 @@ const buildFallbackCase = (caseNumber, reason) =>
     note: `Live scraping unavailable: ${reason}`,
   });
 
-function resolveBrowserExecutablePath() {
-  const executablePath = BROWSER_CANDIDATES.find((candidate) => fs.existsSync(candidate));
-
-  if (!executablePath) {
-    throw new Error(
-      "No Chrome/Chromium browser found. Set PUPPETEER_EXECUTABLE_PATH or CHROME_EXECUTABLE_PATH."
-    );
-  }
-
-  return executablePath;
-}
-
 async function launchBrowser() {
-  console.log("Using browser path:", resolveBrowserExecutablePath());
   return puppeteer.launch({
-    executablePath: resolveBrowserExecutablePath(),
-    headless: true,
+    headless: "new",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
     ],
   });
 }
