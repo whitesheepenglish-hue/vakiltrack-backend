@@ -52,20 +52,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// GET ALL CASES
-app.get("/api/cases", async (req, res) => {
-  try {
-    if (!isDbConnected()) {
-      return res.status(503).json({ error: "MongoDB is not connected" });
-    }
-
-    const cases = await Case.find();
-    res.json(cases);
-  } catch (err) {
-    res.status(500).json({ error: String(err?.message || err) });
-  }
-});
-
 // CAPTCHA 
 
 app.get("/api/captcha", async (req,res)=>{
@@ -139,23 +125,6 @@ app.get("/api/scrape/:caseno", async (req, res) => {
     res.status(500).json({
       message: "Scraper error",
     });
-  }
-});
-
-// ADD CASE
-app.post("/api/cases/add", async (req, res) => {
-  try {
-    if (!isDbConnected()) {
-      return res.status(503).json({ error: "MongoDB is not connected" });
-    }
-
-    const newCase = new Case(req.body);
-
-    await newCase.save();
-
-    res.json({ message: "Case saved" });
-  } catch (err) {
-    res.status(500).json({ error: String(err?.message || err) });
   }
 });
 
