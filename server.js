@@ -68,9 +68,10 @@ app.get("/api/captcha", async (req, res) => {
 
     res.set("Content-Type", "image/png");
     res.send(imageBuffer);
+
   } catch (error) {
-    console.error("Captcha failed:", error?.message || error);
-    res.status(500).json({ error: "Captcha failed" });
+    console.error("CAPTCHA ERROR:", error);   
+    res.status(500).json({ error: error.message }); 
   }
 });
 
