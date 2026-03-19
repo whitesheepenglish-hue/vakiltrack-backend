@@ -2,6 +2,10 @@ const puppeteer = require("puppeteer");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
 const CAPTCHA_SELECTOR = "#captcha_image";
+const BROWSER_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+];
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim();
 
 const emptyCase = (caseNumber) => ({
@@ -25,12 +29,12 @@ const buildFallbackCase = (caseNumber, reason) =>
   });
 
 async function launchBrowser() {
+  const executablePath = process.env.CHROME_EXECUTABLE_PATH || undefined;
+
   return puppeteer.launch({
     headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-    ],
+    args: BROWSER_ARGS,
+    ...(executablePath ? { executablePath } : {}),
   });
 }
 
