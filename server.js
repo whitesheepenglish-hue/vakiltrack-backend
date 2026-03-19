@@ -10,7 +10,10 @@ try {
   dotenv = null;
 }
 const scrapeCase = require("./scrapers/ecourtScraper");
-const { startScraper } = scrapeCase;
+const {
+  createCaptchaSession,
+  submitCaptchaSolution,
+} = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
 
@@ -66,28 +69,79 @@ app.get("/api/login", (req, res) => {
 
 app.get("/api/captcha", async (req, res) => {
   try {
-    const imageBuffer = await startScraper();
+    const caseNumber = String(req.query.caseNumber || "").trim();
     const asJson = String(req.query.format || "").toLowerCase() === "json";
+    const captchaSession = await createCaptchaSession(caseNumber);
 
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.set("Pragma", "no-cache");
     res.set("Expires", "0");
+    res.set("X-Captcha-Session-Id", captchaSession.sessionId);
+    res.set("X-Captcha-Expires-At", String(captchaSession.expiresAt));
 
     if (asJson) {
       return res.json({
         contentType: "image/png",
-        imageBase64: imageBuffer.toString("base64"),
+        sessionId: captchaSession.sessionId,
+        caseNumber: captchaSession.caseNumber,
+        expiresAt: captchaSession.expiresAt,
+        imageBase64: captchaSession.imageBase64,
       });
     }
 
     res.type("png");
-    return res.send(imageBuffer);
+    return res.send(captchaSession.imageBuffer);
 
   } catch (error) {
     console.error("CAPTCHA ERROR:", error);
     return res.status(500).json({
       error: error.message,
-      hint: "Run the Render build step that installs Puppeteer's browser, or set CHROME_EXECUTABLE_PATH to a valid Chrome/Chromium binary.",
+      hint: "Make sure Render installs Puppeteer's browser during build, then request /api/captcha?format=json to get a live captcha session before submitting the solved captcha.",
+    });
+  }
+});
+
+app.post("/api/scrape/manual", async (req, res) => {
+  try {
+    const sessionId = String(req.body?.sessionId || "").trim();
+    const caseNumber = String(req.body?.caseNumber || "").trim();
+    const captcha = String(req.body?.captcha || "").trim();
+
+    const result = await submitCaptchaSolution({
+      sessionId,
+      caseNumber,
+      captcha,
+    });
+
+    const caseData = result.case;
+    let savedToDb = false;
+
+    if (caseData && result.ok && result.code === "SUCCESS" && Case?.db?.readyState === 1) {
+      try {
+        const newCase = new Case({
+          caseNumber: caseData.caseNumber,
+          partyName: [caseData.petitioner, caseData.respondent].filter(Boolean).join(" vs "),
+          court: caseData.court,
+          nextHearingDate: caseData.nextHearing,
+          lastUpdated: new Date(),
+        });
+
+        await newCase.save();
+        savedToDb = true;
+      } catch (saveErr) {
+        console.error("MongoDB save failed:", saveErr?.message || saveErr);
+      }
+    }
+
+    return res.json({
+      ...result,
+      savedToDb,
+    });
+  } catch (error) {
+    console.error("Manual scraper error:", error?.message || error);
+    return res.status(400).json({
+      message: "Manual captcha submission failed",
+      error: String(error?.message || error),
     });
   }
 });
@@ -97,35 +151,15 @@ app.get("/api/scrape/:caseno", async (req, res) => {
   try {
     const caseno = req.params.caseno;
 
-    console.log("Scraping started...");
-    console.log("Scraping case:", caseno);
+    console.log("Creating captcha challenge for case:", caseno);
 
     const data = await scrapeCase(caseno);
 
-    let savedToDb = false;
-
-    // Save to DB if connected; don't block the response if DB is down.
-    if (Case?.db?.readyState === 1) {
-      try {
-        const newCase = new Case({
-          caseNumber: data.caseNumber,
-          partyName: [data.petitioner, data.respondent].filter(Boolean).join(" vs "),
-          court: data.court,
-          nextHearingDate: data.nextHearing,
-          lastUpdated: new Date(),
-        });
-
-        await newCase.save();
-        savedToDb = true;
-        console.log("Data saved to MongoDB");
-      } catch (saveErr) {
-        console.error("MongoDB save failed:", saveErr?.message || saveErr);
-      }
-    }
-
     res.json({
-      message: "Case processed",
-      savedToDb,
+      message: data.captchaRequired
+        ? "Manual captcha required. Solve the returned captcha and POST it to /api/scrape/manual."
+        : "Case processed",
+      savedToDb: false,
       case: data,
     });
   } catch (error) {
