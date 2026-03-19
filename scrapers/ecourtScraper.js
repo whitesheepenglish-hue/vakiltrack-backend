@@ -52,6 +52,7 @@ function resolveBrowserExecutablePath() {
 }
 
 async function launchBrowser() {
+  console.log("Using browser path:", resolveBrowserExecutablePath());
   return puppeteer.launch({
     executablePath: resolveBrowserExecutablePath(),
     headless: true,
