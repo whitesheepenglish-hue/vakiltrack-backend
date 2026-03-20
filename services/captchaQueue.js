@@ -53,11 +53,11 @@ let queueErrorCount = 0;
 
 if (REDIS_URL) {
   connection = new IORedis(REDIS_URL, {
-    maxRetriesPerRequest: null,  // Required for BullMQ compatibility
-    enableReadyCheck: true,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
     lazyConnect: true,
     retryStrategy(times) {
-      const delay = Math.min(times * 50, 2000);
+      const delay = Math.min(times * 100, 3000);
       console.log(`🔄 BullMQ Redis retry attempt ${times}, retrying in ${delay}ms...`);
       return delay;
     },

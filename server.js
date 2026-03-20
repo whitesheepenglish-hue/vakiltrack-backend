@@ -15,9 +15,36 @@ const {
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
-const { captchaQueue, connection, isQueueHealthy } = require("./services/captchaQueue");
+const { captchaQueue, isQueueHealthy } = require("./services/captchaQueue");
 const { isRedisHealthy } = require("./services/redis");
 const { Worker } = require("bullmq");
+const IORedis = require("ioredis");
+
+const connection = new IORedis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+  keepAlive: 30000,
+  connectTimeout: 10000,
+  lazyConnect: true,
+  retryStrategy: times => Math.min(times * 100, 3000),
+  reconnectOnError: err => {
+    const shouldReconnect = err.message.includes('ECONNRESET') || 
+                           err.message.includes('ETIMEDOUT') ||
+                           err.message.includes('ECONNREFUSED');
+    if (shouldReconnect) {
+      console.log('Reconnecting due to:', err.code);
+    }
+    return shouldReconnect;
+  },
+});
+
+connection.on('error', (err) => {
+  console.error('Redis connection error:', err.message);
+});
+
+connection.on('connect', () => {
+  console.log('Redis connected successfully');
+});
 
 const app = express();
 const apiRateLimit = rateLimit({
@@ -33,7 +60,7 @@ function getCaptchaQueue() {
 }
 
 // 👉 CAPTCHA WORKER
-new Worker(
+const worker = new Worker(
   "captcha",
   async job => {
     console.log("Processing captcha:", job.id);
@@ -43,8 +70,22 @@ new Worker(
 
     return result;
   },
-  { connection }
+  {
+    connection,
+    concurrency: 2,
+    lockDuration: 30000,
+    stalledInterval: 30000,
+    maxStalledCount: 1,
+  }
 );
+
+worker.on('error', err => {
+  console.error('Worker error:', err.message);
+});
+
+worker.on('failed', (job, err) => {
+  console.error(`Job ${job?.id} failed:`, err.message);
+});
 
 app.use(express.json());
 app.use(cors());
