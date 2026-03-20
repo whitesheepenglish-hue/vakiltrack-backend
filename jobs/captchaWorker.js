@@ -1,6 +1,6 @@
 const { Worker } = require("bullmq");
 const scrapeCase = require("../scrapers/ecourtScraper");
-const { captchaQueue, redisConfig } = require("../services/captchaQueue");
+const { captchaQueue, connection } = require("../services/captchaQueue");
 
 const { getCachedCaptchaSession } = scrapeCase;
 const CAPTCHA_POOL_INTERVAL_MS = 2000;
@@ -14,7 +14,7 @@ const captchaWorker = new Worker(
     return getCachedCaptchaSession(caseNumber);
   },
   {
-    connection: redisConfig,
+    connection,
     concurrency: 5,
   },
 );

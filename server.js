@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
+const { QueueEvents } = require("bullmq");
 const connectDB = require("./config/db");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -16,9 +17,10 @@ const {
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
-const { captchaQueue, captchaQueueEvents } = require("./services/captchaQueue");
+const { captchaQueue, connection } = require("./services/captchaQueue");
 
 const app = express();
+const captchaQueueEvents = new QueueEvents("captcha", { connection });
 const apiRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 10,

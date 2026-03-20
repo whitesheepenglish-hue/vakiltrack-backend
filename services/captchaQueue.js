@@ -1,15 +1,19 @@
-const { Queue, QueueEvents } = require("bullmq");
-const { redisConfig } = require("./redis");
+const { Queue } = require("bullmq");
+const IORedis = require("ioredis");
+
+const connection = new IORedis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null,
+});
+
+connection.on("error", (err) => {
+  console.error("Redis Error:", err.message);
+});
 
 const captchaQueue = new Queue("captcha", {
-  connection: redisConfig,
-});
-const captchaQueueEvents = new QueueEvents("captcha", {
-  connection: redisConfig,
+  connection,
 });
 
 module.exports = {
   captchaQueue,
-  captchaQueueEvents,
-  redisConfig,
+  connection,
 };

@@ -1,15 +1,19 @@
-const Redis = require("ioredis");
+const IORedis = require("ioredis");
 
-const redisUrl = process.env.REDIS_URL;
+const redisConfig = {
+  connection: {
+    url: process.env.REDIS_URL,
+    maxRetriesPerRequest: null,
+  },
+};
 
-const redisConfig = redisUrl
-  ? redisUrl
-  : {
-      host: process.env.REDIS_HOST || "127.0.0.1",
-      port: Number(process.env.REDIS_PORT || 6379),
-    };
+const redis = new IORedis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null,
+});
 
-const redis = new Redis(redisConfig);
+redis.on("error", (err) => {
+  console.error("Redis Error:", err.message);
+});
 
 module.exports = {
   redis,
