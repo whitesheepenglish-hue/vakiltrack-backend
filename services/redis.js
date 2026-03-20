@@ -46,8 +46,8 @@ if (parsedUrl) {
 const redisConfig = {
   maxRetriesPerRequest: null, // Required for BullMQ compatibility
   enableReadyCheck: true,
-  enableOfflineQueue: false,
-  lazyConnect: false, // Connect immediately
+  enableOfflineQueue: true, // Allow queueing commands while connecting
+  lazyConnect: true, // Connect on first command - more stable for cloud Redis
   keepAlive: 30000, // Keep connection alive
   connectTimeout: 30000, // 30s for cloud Redis
   commandTimeout: 10000,
@@ -132,7 +132,21 @@ async function safeRedisOperation(operation, fallback = null) {
 
 // Wait for connection
 async function waitForRedis(timeoutMs = 30000) {
+  if (!redis) throw new Error("Redis not initialized");
+  
+  // If already healthy, return immediately
   if (isRedisHealthy()) return redis;
+  
+  // With lazyConnect, we need to explicitly connect
+  if (redis.status === "wait") {
+    try {
+      await redis.connect();
+    } catch (err) {
+      console.error("❌ Redis connect() failed:", err.message);
+    }
+  }
+  
+  // Wait for ready state
   const start = Date.now();
   while (!isRedisHealthy()) {
     if (Date.now() - start > timeoutMs) {
