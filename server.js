@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 const connectDB = require("./config/db");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -11,13 +12,17 @@ try {
 }
 const scrapeCase = require("./scrapers/ecourtScraper");
 const {
-  createCaptchaSession,
   submitCaptchaSolution,
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
+const { captchaQueue, captchaQueueEvents } = require("./services/captchaQueue");
 
 const app = express();
+const apiRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+});
 
 const isDbConnected = () => Case?.db?.readyState === 1;
 
@@ -45,6 +50,7 @@ try {
 
 app.use(express.json());
 app.use(cors());
+app.use(apiRateLimit);
 app.use("/api/cases", caseRoutes);
 
 /* ---------------- ROUTES ---------------- */
@@ -55,6 +61,10 @@ app.get("/", (req, res) => {
     status: "VakilTrack API running",
     dbConnected: isDbConnected(),
   });
+});
+
+app.get("/health", (req, res) => {
+  res.send("OK");
 });
 
 // USERS
@@ -70,33 +80,35 @@ app.get("/api/login", (req, res) => {
 app.get("/api/captcha", async (req, res) => {
   try {
     const caseNumber = String(req.query.caseNumber || "").trim();
-    const asJson = String(req.query.format || "").toLowerCase() === "json";
-    const captchaSession = await createCaptchaSession(caseNumber);
+    const job = await captchaQueue.add("generate", { caseNumber });
+    const result = await job.waitUntilFinished(captchaQueueEvents);
 
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    res.set("Pragma", "no-cache");
-    res.set("Expires", "0");
-    res.set("X-Captcha-Session-Id", captchaSession.sessionId);
-    res.set("X-Captcha-Expires-At", String(captchaSession.expiresAt));
-
-    if (asJson) {
-      return res.json({
-        contentType: "image/png",
-        sessionId: captchaSession.sessionId,
-        caseNumber: captchaSession.caseNumber,
-        expiresAt: captchaSession.expiresAt,
-        imageBase64: captchaSession.imageBase64,
-      });
-    }
-
-    res.type("png");
-    return res.send(captchaSession.imageBuffer);
-
+    return res.json(result);
   } catch (error) {
     console.error("CAPTCHA ERROR:", error);
     return res.status(500).json({
       error: error.message,
-      hint: "Make sure Render installs Puppeteer's browser during build, then request /api/captcha?format=json to get a live captcha session before submitting the solved captcha.",
+      hint: "Make sure Redis is running and the BullMQ captcha worker is online before requesting /api/captcha.",
+    });
+  }
+});
+
+app.get("/api/job/:id", async (req, res) => {
+  try {
+    const job = await captchaQueue.getJob(req.params.id);
+
+    if (!job) {
+      return res.status(404).send("Not found");
+    }
+
+    return res.json({
+      state: await job.getState(),
+      result: job.returnvalue,
+    });
+  } catch (error) {
+    console.error("JOB STATUS ERROR:", error);
+    return res.status(500).json({
+      error: error.message,
     });
   }
 });

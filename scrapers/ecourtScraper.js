@@ -1,7 +1,9 @@
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const NodeCache = require("node-cache");
 const puppeteer = require("puppeteer");
+const { redis } = require("../services/redis");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
 const CAPTCHA_SELECTOR = "#captcha_image";
@@ -9,11 +11,21 @@ const CNR_INPUT_SELECTOR = "#cino";
 const CAPTCHA_INPUT_SELECTOR = "#fcaptcha_code";
 const SEARCH_BUTTON_SELECTOR = "#searchbtn";
 const CAPTCHA_SESSION_TTL_MS = 10 * 60 * 1000;
-const captchaSessions = new Map();
+const MAX_PAGES = Number(process.env.MAX_PAGES || 10);
+const PAGE_WAIT_MS = 100;
+const BROWSER_RESTART_INTERVAL_MS = 1000 * 60 * 10;
+const captchaPages = new Map();
+const captchaCache = new NodeCache({ stdTTL: 60 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DEFAULT_RETRY_COUNT = 3;
+let sharedBrowser = null;
+let sharedBrowserPromise = null;
+let activePages = 0;
 
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim().toUpperCase();
 const normalizeCaptcha = (captcha) => String(captcha || "").trim();
+const getCaptchaCacheKey = () => "captcha:global";
+const getCaptchaSessionKey = (sessionId) => `captcha:${sessionId}`;
 
 const emptyCase = (caseNumber) => ({
   caseNumber,
@@ -35,35 +47,102 @@ const buildFallbackCase = (caseNumber, reason) =>
     note: `Live scraping unavailable: ${reason}`,
   });
 
-function getSession(id) {
+async function retry(fn, retries = DEFAULT_RETRY_COUNT) {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      console.warn(`Retry ${attempt + 1} failed`, error?.message || error);
+      if (attempt === retries - 1) {
+        throw error;
+      }
+    }
+  }
+}
+
+async function safePage() {
+  while (activePages >= MAX_PAGES) {
+    await sleep(PAGE_WAIT_MS);
+  }
+
+  activePages += 1;
+}
+
+function releasePage() {
+  activePages = Math.max(0, activePages - 1);
+}
+
+function logScraperStats() {
+  console.log({
+    activePages,
+    memory: process.memoryUsage().heapUsed,
+  });
+}
+
+async function closePage(page) {
+  if (!page || page.__vakiltrackReleased) {
+    return;
+  }
+
+  page.__vakiltrackReleased = true;
+  releasePage();
+  logScraperStats();
+  await page.close().catch(() => {});
+  page = null;
+}
+
+async function getSessionMetadata(id) {
   if (!id) {
     return null;
   }
 
-  const session = captchaSessions.get(id) || null;
+  const rawSession = await redis.get(getCaptchaSessionKey(id));
+  return rawSession ? JSON.parse(rawSession) : null;
+}
+
+async function getSession(id) {
+  if (!id) {
+    return null;
+  }
+
+  const session = await getSessionMetadata(id);
   if (!session) {
     return null;
   }
 
   if (session.expiresAt <= Date.now()) {
-    closeCaptchaSession(id).catch(() => {});
+    await closeCaptchaSession(id, session).catch(() => {});
     return null;
   }
 
-  return session;
+  const localSession = captchaPages.get(id);
+  if (!localSession?.page) {
+    return {
+      ...session,
+      page: null,
+      timeoutHandle: null,
+    };
+  }
+
+  return {
+    ...session,
+    ...localSession,
+  };
 }
 
-async function closeCaptchaSession(sessionId) {
-  const session = captchaSessions.get(sessionId);
-  captchaSessions.delete(sessionId);
+async function closeCaptchaSession(sessionId, session = null) {
+  const resolvedSession = session || await getSessionMetadata(sessionId).catch(() => null);
+  captchaPages.delete(sessionId);
+  await redis.del(getCaptchaSessionKey(sessionId));
 
-  if (!session) {
+  if (!resolvedSession) {
     return;
   }
 
-  clearTimeout(session.timeoutHandle);
+  clearTimeout(resolvedSession.timeoutHandle);
+  captchaCache.del(getCaptchaCacheKey(resolvedSession.caseNumber));
 
-  await session.browser?.close().catch(() => {});
+  await closePage(resolvedSession.page);
 }
 
 function scheduleSessionCleanup(sessionId) {
@@ -74,6 +153,7 @@ function scheduleSessionCleanup(sessionId) {
 
 async function captureCaptchaImage(page) {
   await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 15_000 });
+  await sleep(1_000);
 
   const captchaElement = await page.$(CAPTCHA_SELECTOR);
   if (!captchaElement) {
@@ -131,11 +211,12 @@ function resolveChromeExecutablePath() {
 async function launchBrowser() {
   const executablePath = resolveChromeExecutablePath();
   const launchOptions = {
-    headless: true,
+    headless: "new",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
+      "--disable-gpu",
     ],
   };
 
@@ -146,20 +227,68 @@ async function launchBrowser() {
   return puppeteer.launch(launchOptions);
 }
 
+async function getBrowser() {
+  if (sharedBrowser && sharedBrowser.connected) {
+    return sharedBrowser;
+  }
+
+  if (!sharedBrowserPromise) {
+    // Reuse one Puppeteer browser across jobs; each request gets its own page.
+    sharedBrowserPromise = launchBrowser()
+      .then((browser) => {
+        sharedBrowser = browser;
+        browser.once("disconnected", () => {
+          sharedBrowser = null;
+          sharedBrowserPromise = null;
+        });
+        return browser;
+      })
+      .catch((error) => {
+        sharedBrowser = null;
+        sharedBrowserPromise = null;
+        throw error;
+      });
+  }
+
+  return sharedBrowserPromise;
+}
+
+setInterval(async () => {
+  if (sharedBrowser) {
+    await sharedBrowser.close().catch(() => {});
+    sharedBrowser = null;
+    sharedBrowserPromise = null;
+  }
+}, BROWSER_RESTART_INTERVAL_MS);
+
 async function openEcourtsPage() {
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
+  const browser = await getBrowser();
+  await safePage();
+  logScraperStats();
 
-  await page.goto(ECOURTS_URL, {
-    waitUntil: "domcontentloaded",
-    timeout: 30_000,
-  });
+  let page;
 
-  await page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15_000 });
-  await page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15_000 });
-  await page.waitForSelector(SEARCH_BUTTON_SELECTOR, { timeout: 15_000 });
+  try {
+    page = await browser.newPage();
+    await page.setCacheEnabled(false);
 
-  return { browser, page };
+    await Promise.all([
+      page.goto(ECOURTS_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 30_000,
+      }),
+      page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 15_000 }),
+    ]);
+
+    await page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15_000 });
+    await page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15_000 });
+    await page.waitForSelector(SEARCH_BUTTON_SELECTOR, { timeout: 15_000 });
+
+    return { browser, page };
+  } catch (error) {
+    await closePage(page);
+    throw error;
+  }
 }
 
 async function clearAndType(page, selector, value) {
@@ -262,7 +391,7 @@ function buildCaseFromState(caseNumber, state) {
 
 async function createCaptchaSession(caseNumber) {
   const normalizedCaseNumber = normalizeCaseNumber(caseNumber);
-  const { browser, page } = await openEcourtsPage();
+  const { page } = await openEcourtsPage();
 
   try {
     if (normalizedCaseNumber) {
@@ -274,13 +403,19 @@ async function createCaptchaSession(caseNumber) {
     const expiresAt = Date.now() + CAPTCHA_SESSION_TTL_MS;
     const timeoutHandle = scheduleSessionCleanup(sessionId);
 
-    captchaSessions.set(sessionId, {
-      browser,
+    captchaPages.set(sessionId, {
       page,
-      caseNumber: normalizedCaseNumber,
-      expiresAt,
       timeoutHandle,
     });
+    await redis.set(
+      getCaptchaSessionKey(sessionId),
+      JSON.stringify({
+        caseNumber: normalizedCaseNumber,
+        expiresAt,
+      }),
+      "EX",
+      Math.floor(CAPTCHA_SESSION_TTL_MS / 1000),
+    );
 
     return {
       sessionId,
@@ -290,15 +425,38 @@ async function createCaptchaSession(caseNumber) {
       imageBase64: captchaImage.toString("base64"),
     };
   } catch (error) {
-    await browser.close().catch(() => {});
+    await closePage(page);
     throw error;
   }
 }
 
+async function getCachedCaptchaSession(caseNumber) {
+  const normalizedCaseNumber = normalizeCaseNumber(caseNumber);
+  const cacheKey = getCaptchaCacheKey(normalizedCaseNumber);
+
+  if (captchaCache.has(cacheKey)) {
+    const cachedSession = captchaCache.get(cacheKey);
+    if (cachedSession?.sessionId && await getSession(cachedSession.sessionId)) {
+      return cachedSession;
+    }
+
+    captchaCache.del(cacheKey);
+  }
+
+  const data = await createCaptchaSession(normalizedCaseNumber);
+  captchaCache.set(cacheKey, data);
+
+  return data;
+}
+
 async function refreshCaptcha(sessionId) {
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     throw new Error("Captcha session expired or was not found.");
+  }
+
+  if (!session.page) {
+    throw new Error("Captcha session exists in Redis but is not attached to a live browser in this process.");
   }
 
   const imageBuffer = await captureCaptchaImage(session.page);
@@ -312,14 +470,18 @@ async function refreshCaptcha(sessionId) {
 }
 
 async function startScraper(caseNumber) {
-  const session = await createCaptchaSession(caseNumber);
+  const session = await retry(() => getCachedCaptchaSession(caseNumber));
   return session.imageBuffer;
 }
 
 async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     throw new Error("Captcha session expired or was not found. Request a new captcha and try again.");
+  }
+
+  if (!session.page) {
+    throw new Error("Captcha session is not available on this server. Request a new captcha and submit it to the same worker instance.");
   }
 
   const normalizedCaseNumber = normalizeCaseNumber(caseNumber || session.caseNumber);
@@ -334,56 +496,70 @@ async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
   }
 
   session.caseNumber = normalizedCaseNumber;
+  await redis.set(
+    getCaptchaSessionKey(sessionId),
+    JSON.stringify({
+      caseNumber: normalizedCaseNumber,
+      expiresAt: session.expiresAt,
+    }),
+    "EX",
+    Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1000)),
+  );
 
   const { page } = session;
 
   await clearAndType(page, CNR_INPUT_SELECTOR, normalizedCaseNumber);
   await clearAndType(page, CAPTCHA_INPUT_SELECTOR, normalizedCaptcha);
-  await page.click(SEARCH_BUTTON_SELECTOR);
-  await sleep(2_000);
+  try {
+    await page.click(SEARCH_BUTTON_SELECTOR);
+    await sleep(2_000);
 
-  const state = await extractPageState(page);
-  const dialogText = state.dialogs.join(" ").toLowerCase();
+    const state = await extractPageState(page);
+    const dialogText = state.dialogs.join(" ").toLowerCase();
 
-  if (dialogText.includes("invalid captcha")) {
-    const refreshed = await refreshCaptcha(sessionId);
+    if (dialogText.includes("invalid captcha")) {
+      const refreshed = await refreshCaptcha(sessionId);
 
-    return {
-      ok: false,
-      code: "INVALID_CAPTCHA",
-      message: "Invalid captcha. Please solve the refreshed captcha and try again.",
-      sessionId,
-      caseNumber: normalizedCaseNumber,
-      expiresAt: refreshed.expiresAt,
-      captchaImageBase64: refreshed.imageBase64,
-    };
-  }
+      return {
+        ok: false,
+        code: "INVALID_CAPTCHA",
+        message: "Invalid captcha. Please solve the refreshed captcha and try again.",
+        sessionId,
+        caseNumber: normalizedCaseNumber,
+        expiresAt: refreshed.expiresAt,
+        captchaImageBase64: refreshed.imageBase64,
+      };
+    }
 
-  if (dialogText.includes("record not found") || state.visibleText.toLowerCase().includes("record not found")) {
+    if (dialogText.includes("record not found") || state.visibleText.toLowerCase().includes("record not found")) {
+      await closeCaptchaSession(sessionId);
+
+      return {
+        ok: true,
+        code: "NOT_FOUND",
+        message: "No case record was found for that CNR number.",
+        case: buildResult(normalizedCaseNumber, {
+          court: "eCourts",
+          note: "No case record was found for that CNR number.",
+          rawText: state.visibleText,
+          tables: state.tables,
+        }),
+      };
+    }
+
+    const result = buildCaseFromState(normalizedCaseNumber, state);
     await closeCaptchaSession(sessionId);
 
     return {
       ok: true,
-      code: "NOT_FOUND",
-      message: "No case record was found for that CNR number.",
-      case: buildResult(normalizedCaseNumber, {
-        court: "eCourts",
-        note: "No case record was found for that CNR number.",
-        rawText: state.visibleText,
-        tables: state.tables,
-      }),
+      code: "SUCCESS",
+      message: "Case data fetched from eCourts.",
+      case: result,
     };
+  } catch (error) {
+    await closeCaptchaSession(sessionId).catch(() => {});
+    throw error;
   }
-
-  const result = buildCaseFromState(normalizedCaseNumber, state);
-  await closeCaptchaSession(sessionId);
-
-  return {
-    ok: true,
-    code: "SUCCESS",
-    message: "Case data fetched from eCourts.",
-    case: result,
-  };
 }
 
 async function scrapeCase(caseNumber) {
@@ -394,7 +570,7 @@ async function scrapeCase(caseNumber) {
   }
 
   try {
-    const challenge = await createCaptchaSession(normalizedCaseNumber);
+    const challenge = await retry(() => getCachedCaptchaSession(normalizedCaseNumber));
 
     return buildResult(normalizedCaseNumber, {
       court: "eCourts",
@@ -412,8 +588,12 @@ async function scrapeCase(caseNumber) {
 
 scrapeCase.startScraper = startScraper;
 scrapeCase.createCaptchaSession = createCaptchaSession;
+scrapeCase.getCachedCaptchaSession = getCachedCaptchaSession;
 scrapeCase.refreshCaptcha = refreshCaptcha;
 scrapeCase.submitCaptchaSolution = submitCaptchaSolution;
 scrapeCase.closeCaptchaSession = closeCaptchaSession;
+scrapeCase.retry = retry;
+scrapeCase.withRetry = retry;
+scrapeCase.getBrowser = getBrowser;
 
 module.exports = scrapeCase;
