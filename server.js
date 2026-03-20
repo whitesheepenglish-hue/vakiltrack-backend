@@ -17,6 +17,7 @@ const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
 const { captchaQueue, connection, isQueueHealthy } = require("./services/captchaQueue");
 const { isRedisHealthy } = require("./services/redis");
+const { Worker } = require("bullmq");
 
 const app = express();
 const apiRateLimit = rateLimit({
@@ -30,6 +31,20 @@ const isDbConnected = () => Case?.db?.readyState === 1;
 function getCaptchaQueue() {
   return isQueueHealthy() ? captchaQueue : null;
 }
+
+// 👉 CAPTCHA WORKER
+new Worker(
+  "captcha",
+  async job => {
+    console.log("Processing captcha:", job.id);
+
+    // 👉 call your captcha solving function here
+    const result = await scrapeCase(job.data.caseNumber);
+
+    return result;
+  },
+  { connection }
+);
 
 app.use(express.json());
 app.use(cors());
@@ -255,26 +270,6 @@ app.get("/api/documents", (req, res) => {
 
 /* ---------------- SERVER ---------------- */
 
-const PORT = process.env.PORT || 10000;
-
-(async () => {
-  app.locals.dbConnected = false;
-
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-
-  try {
-    await connectDB();
-    app.locals.dbConnected = true;
-  } catch (err) {
-    console.error("MongoDB Error:", err?.message || err);
-    if (String(process.env.REQUIRE_DB || "").toLowerCase() === "true") {
-      server.close(() => {
-        process.exitCode = 1;
-      });
-      return;
-    }
-    console.warn("MongoDB is unavailable; continuing without DB (set REQUIRE_DB=true to fail-fast).");
-  }
-})();
+app.listen(process.env.PORT || 10000, () => {
+  console.log("Server running");
+});
