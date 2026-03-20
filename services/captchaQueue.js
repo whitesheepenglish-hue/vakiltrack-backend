@@ -3,11 +3,13 @@ require("../config/loadEnv");
 const { Queue } = require("bullmq");
 const IORedis = require("ioredis");
 
-const redisUrl = String(process.env.REDIS_URL || "").trim();
+if (!process.env.REDIS_URL) {
+  throw new Error("❌ REDIS_URL is missing in environment variables");
+}
 
-const connection = new IORedis(redisUrl, {
+const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
-  tls: redisUrl.startsWith("rediss://") ? {} : undefined,
+  tls: process.env.REDIS_URL.startsWith("rediss://") ? {} : undefined,
 });
 
 connection.on("connect", () => {
