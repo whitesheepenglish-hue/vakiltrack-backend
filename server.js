@@ -54,9 +54,11 @@ app.get("/api/captcha", async (req, res) => {
   try {
     const caseNumber = String(req.query.caseNumber || "").trim();
     const job = await captchaQueue.add("generate", { caseNumber });
-    const result = await job.waitUntilFinished(captchaQueueEvents);
 
-    return res.json(result);
+    return res.json({
+      jobId: job.id,
+      status: "queued"
+    });
   } catch (error) {
     console.error("CAPTCHA ERROR:", error);
     const redisUrl = String(process.env.REDIS_URL || "").trim();
@@ -66,6 +68,30 @@ app.get("/api/captcha", async (req, res) => {
     return res.status(500).json({
       error: error.message,
       hint,
+    });
+  }
+});
+
+app.get("/api/captcha/result/:jobId", async (req, res) => {
+  try {
+    const job = await captchaQueue.getJob(req.params.jobId);
+
+    if (!job) return res.json({ status: "not_found" });
+
+    const state = await job.getState();
+
+    if (state !== "completed") {
+      return res.json({ status: state });
+    }
+
+    return res.json({
+      status: "completed",
+      data: job.returnvalue
+    });
+  } catch (error) {
+    console.error("CAPTCHA RESULT ERROR:", error);
+    return res.status(500).json({
+      error: error.message,
     });
   }
 });
