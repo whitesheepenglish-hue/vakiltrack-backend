@@ -2,15 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const { QueueEvents } = require("bullmq");
+require("./config/loadEnv");
 const connectDB = require("./config/db");
-const fs = require("node:fs");
-const path = require("node:path");
-let dotenv;
-try {
-  dotenv = require("dotenv");
-} catch {
-  dotenv = null;
-}
 const scrapeCase = require("./scrapers/ecourtScraper");
 const {
   submitCaptchaSolution,
@@ -27,21 +20,6 @@ const apiRateLimit = rateLimit({
 });
 
 const isDbConnected = () => Case?.db?.readyState === 1;
-
-/* ---------------- ENV ---------------- */
-
-// Load .env from common locations so it works whether you run from repo root
-// or from the nested `vakiltrack-backend/` folder.
-const envCandidates = [
-  path.join(process.cwd(), ".env"),
-  path.join(__dirname, ".env"),
-  path.join(__dirname, "..", ".env"),
-  path.join(process.cwd(), "..", ".env"),
-];
-
-for (const envPath of envCandidates) {
-  if (dotenv && fs.existsSync(envPath)) dotenv.config({ path: envPath, quiet: true });
-}
 
 let dbConnection;
 try {
@@ -88,9 +66,13 @@ app.get("/api/captcha", async (req, res) => {
     return res.json(result);
   } catch (error) {
     console.error("CAPTCHA ERROR:", error);
+    const redisUrl = String(process.env.REDIS_URL || "").trim();
+    const hint = redisUrl
+      ? `Redis is configured as ${redisUrl}. Make sure that Redis is reachable and the BullMQ captcha worker is online before requesting /api/captcha.`
+      : "REDIS_URL is not set. Configure a reachable Redis instance and start the BullMQ captcha worker before requesting /api/captcha.";
     return res.status(500).json({
       error: error.message,
-      hint: "Make sure Redis is running and the BullMQ captcha worker is online before requesting /api/captcha.",
+      hint,
     });
   }
 });

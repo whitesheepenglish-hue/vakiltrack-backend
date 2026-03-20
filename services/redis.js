@@ -1,3 +1,5 @@
+require("../config/loadEnv");
+
 const IORedis = require("ioredis");
 
 const redisConfig = {

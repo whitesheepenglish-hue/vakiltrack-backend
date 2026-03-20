@@ -1,3 +1,5 @@
+require("../config/loadEnv");
+
 const { Queue } = require("bullmq");
 const IORedis = require("ioredis");
 

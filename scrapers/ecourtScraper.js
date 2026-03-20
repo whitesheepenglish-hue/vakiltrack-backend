@@ -24,7 +24,7 @@ let activePages = 0;
 
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim().toUpperCase();
 const normalizeCaptcha = (captcha) => String(captcha || "").trim();
-const getCaptchaCacheKey = () => "captcha:global";
+const getCaptchaCacheKey = (caseNumber) => `captcha:${normalizeCaseNumber(caseNumber) || "global"}`;
 const getCaptchaSessionKey = (sessionId) => `captcha:${sessionId}`;
 
 const emptyCase = (caseNumber) => ({
@@ -455,18 +455,10 @@ async function refreshCaptcha(sessionId) {
     throw new Error("Captcha session expired or was not found.");
   }
 
-  if (!session.page) {
-    throw new Error("Captcha session exists in Redis but is not attached to a live browser in this process.");
-  }
-
-  const imageBuffer = await captureCaptchaImage(session.page);
-  return {
-    sessionId,
-    caseNumber: session.caseNumber,
-    expiresAt: session.expiresAt,
-    imageBuffer,
-    imageBase64: imageBuffer.toString("base64"),
-  };
+  // Start over with a brand new eCourts page instead of trusting the current
+  // browser state after a failed captcha attempt.
+  await closeCaptchaSession(sessionId, session);
+  return createCaptchaSession(session.caseNumber);
 }
 
 async function startScraper(caseNumber) {
@@ -524,7 +516,7 @@ async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
         ok: false,
         code: "INVALID_CAPTCHA",
         message: "Invalid captcha. Please solve the refreshed captcha and try again.",
-        sessionId,
+        sessionId: refreshed.sessionId,
         caseNumber: normalizedCaseNumber,
         expiresAt: refreshed.expiresAt,
         captchaImageBase64: refreshed.imageBase64,
