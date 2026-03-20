@@ -50,69 +50,100 @@ if (parsedUrl) {
 let connection = null;
 let isQueueAvailable = false;
 let queueErrorCount = 0;
+let isConnectionReady = false;
 
 if (REDIS_URL) {
   connection = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    lazyConnect: true,
+    enableReadyCheck: true, // IMPORTANT: Required for BullMQ to work correctly
+    enableOfflineQueue: false,
+    lazyConnect: false, // Connect immediately so BullMQ can use it
+    keepAlive: 30000, // Send keepalive every 30 seconds to prevent idle timeout
+    connectTimeout: 30000, // 30 seconds connection timeout for cloud Redis
+    commandTimeout: 10000, // 10 seconds command timeout
     retryStrategy(times) {
-      const delay = Math.min(times * 100, 3000);
+      const delay = Math.min(times * 200, 10000);
       console.log(`🔄 BullMQ Redis retry attempt ${times}, retrying in ${delay}ms...`);
       return delay;
     },
     reconnectOnError(err) {
-      const targetErrors = ["ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND"];
-      if (targetErrors.some(e => err.message.includes(e))) {
-        console.log("🔄 BullMQ Redis reconnecting due to connection error...");
+      const targetErrors = ["ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EPIPE", "ECONNABORTED"];
+      const errMsg = err.message || err.code || "";
+      if (targetErrors.some(e => errMsg.includes(e))) {
+        console.log(`🔄 BullMQ Redis will reconnect due to: ${errMsg}`);
         return true;
       }
       return false;
     },
-    tls: REDIS_URL.startsWith("rediss://") ? {} : undefined,
+    tls: REDIS_URL.startsWith("rediss://") ? {
+      rejectUnauthorized: false
+    } : undefined,
   });
 
   connection.on("connect", () => {
-    isQueueAvailable = true;
     queueErrorCount = 0;
     console.log("✅ BullMQ Redis Connected");
   });
 
   connection.on("ready", () => {
     isQueueAvailable = true;
-    console.log("✅ BullMQ Redis Ready");
+    isConnectionReady = true;
+    console.log("✅ BullMQ Redis Ready - Queue is now available");
   });
 
   connection.on("error", (err) => {
     queueErrorCount++;
     isQueueAvailable = false;
     console.error("❌ BullMQ Redis Error:", err.message);
-    console.error("   Error Code:", err.code || "N/A");
+    console.error("   Error Code:", err.code || err.errno || "N/A");
 
-    if (err.code === "ENOTFOUND") {
+    if (err.code === "ENOTFOUND" || err.code === "EAI_AGAIN") {
       console.error("   💡 Hostname not found. Check your REDIS_URL environment variable.");
     } else if (err.code === "ECONNREFUSED") {
       console.error("   💡 Connection refused. Is Redis running and accessible?");
+    } else if (err.code === "ECONNRESET" || err.code === "EPIPE") {
+      console.error("   💡 Connection reset. Redis server closed connection. Keepalive is enabled to prevent this.");
     }
   });
 
   connection.on("close", () => {
     isQueueAvailable = false;
+    isConnectionReady = false;
     console.log("⚠️  BullMQ Redis connection closed");
   });
 
   connection.on("reconnecting", () => {
+    isQueueAvailable = false;
     console.log("🔄 BullMQ Redis reconnecting...");
   });
 } else {
   console.warn("⚠️  Running without Redis - BullMQ features will be disabled");
 }
 
-// Create queue with error handling
+// Create queue with error handling - only after connection is ready
 let captchaQueue = null;
+let queueInitialized = false;
 
-if (connection) {
+async function initializeQueue() {
+  if (!connection || queueInitialized) return;
+
+  // Wait for connection to be ready before creating Queue
+  if (connection.status !== "ready") {
+    console.log("⏳ Waiting for Redis connection before creating BullMQ Queue...");
+    await new Promise((resolve) => {
+      const checkReady = () => {
+        if (connection.status === "ready") {
+          resolve();
+        } else {
+          setTimeout(checkReady, 100);
+        }
+      };
+      checkReady();
+    });
+  }
+
   try {
+    console.log("🚀 Creating BullMQ Queue...");
     captchaQueue = new Queue("captcha", {
       connection,
       defaultJobOptions: {
@@ -121,15 +152,31 @@ if (connection) {
           type: "exponential",
           delay: 1000,
         },
+        removeOnComplete: 10, // Keep last 10 completed jobs
+        removeOnFail: 5, // Keep last 5 failed jobs
       },
     });
+
+    queueInitialized = true;
+    console.log("✅ BullMQ Queue created successfully");
 
     captchaQueue.on("error", (error) => {
       console.error("❌ Captcha Queue Error:", error.message);
     });
+
+    captchaQueue.on("waiting", (job) => {
+      // Suppress verbose waiting logs
+    });
+
   } catch (error) {
     console.error("❌ Failed to create Captcha Queue:", error.message);
+    queueInitialized = false;
   }
+}
+
+// Start queue initialization
+if (connection) {
+  initializeQueue();
 }
 
 // Graceful queue operations
@@ -148,7 +195,19 @@ async function safeQueueOperation(operation, fallback = null) {
 }
 
 function isQueueHealthy() {
-  return isQueueAvailable && connection && connection.status === "ready";
+  return isQueueAvailable && queueInitialized && connection && connection.status === "ready";
+}
+
+// Wait for queue to be ready
+async function waitForQueue(timeoutMs = 30000) {
+  const start = Date.now();
+  while (!isQueueHealthy()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("Timeout waiting for queue to be ready");
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return captchaQueue;
 }
 
 module.exports = {
@@ -157,4 +216,6 @@ module.exports = {
   isQueueHealthy,
   safeQueueOperation,
   isQueueAvailable: () => isQueueAvailable,
+  initializeQueue,
+  waitForQueue,
 };

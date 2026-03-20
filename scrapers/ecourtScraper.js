@@ -87,7 +87,7 @@ async function closePage(page) {
   page.__vakiltrackReleased = true;
   releasePage();
   logScraperStats();
-  await page.close().catch(() => {});
+  await page.close().catch(() => { });
   page = null;
 }
 
@@ -111,7 +111,7 @@ async function getSession(id) {
   }
 
   if (session.expiresAt <= Date.now()) {
-    await closeCaptchaSession(id, session).catch(() => {});
+    await closeCaptchaSession(id, session).catch(() => { });
     return null;
   }
 
@@ -147,7 +147,7 @@ async function closeCaptchaSession(sessionId, session = null) {
 
 function scheduleSessionCleanup(sessionId) {
   return setTimeout(() => {
-    closeCaptchaSession(sessionId).catch(() => {});
+    closeCaptchaSession(sessionId).catch(() => { });
   }, CAPTCHA_SESSION_TTL_MS);
 }
 
@@ -255,7 +255,7 @@ async function getBrowser() {
 
 setInterval(async () => {
   if (sharedBrowser) {
-    await sharedBrowser.close().catch(() => {});
+    await sharedBrowser.close().catch(() => { });
     sharedBrowser = null;
     sharedBrowserPromise = null;
   }
@@ -549,7 +549,7 @@ async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
       case: result,
     };
   } catch (error) {
-    await closeCaptchaSession(sessionId).catch(() => {});
+    await closeCaptchaSession(sessionId).catch(() => { });
     throw error;
   }
 }

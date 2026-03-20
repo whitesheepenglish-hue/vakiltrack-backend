@@ -48,21 +48,28 @@ if (parsedUrl) {
 const redisConfig = {
   maxRetriesPerRequest: null,
   enableReadyCheck: true,
+  enableOfflineQueue: false, // Prevent offline queue buildup
   lazyConnect: true, // Don't connect immediately, let us handle it
+  keepAlive: 30000, // Send keepalive every 30 seconds to prevent idle timeout
+  connectTimeout: 10000, // 10 seconds connection timeout
+  commandTimeout: 5000, // 5 seconds command timeout
   retryStrategy(times) {
-    const delay = Math.min(times * 50, 2000);
+    const delay = Math.min(times * 100, 3000);
     console.log(`🔄 Redis retry attempt ${times}, retrying in ${delay}ms...`);
     return delay;
   },
   reconnectOnError(err) {
-    const targetErrors = ["ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND"];
-    if (targetErrors.some(e => err.message.includes(e))) {
-      console.log("🔄 Redis reconnecting due to connection error...");
+    const targetErrors = ["ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EPIPE", "ECONNABORTED"];
+    const errMsg = err.message || err.code || "";
+    if (targetErrors.some(e => errMsg.includes(e))) {
+      console.log(`🔄 Redis reconnecting due to error: ${errMsg}`);
       return true;
     }
     return false;
   },
-  tls: REDIS_URL.startsWith("rediss://") ? {} : undefined,
+  tls: REDIS_URL.startsWith("rediss://") ? {
+    rejectUnauthorized: false // Allow self-signed certs if needed
+  } : undefined,
 };
 
 const redis = new IORedis(REDIS_URL, redisConfig);
@@ -90,17 +97,20 @@ redis.on("error", (err) => {
 
   // Log detailed error info
   console.error("❌ Redis Error:", err.message);
-  console.error("   Error Code:", err.code || "N/A");
+  console.error("   Error Code:", err.code || err.errno || "N/A");
   console.error("   Error Count:", connectionErrors);
 
   // Specific handling for common errors
-  if (err.code === "ENOTFOUND") {
+  if (err.code === "ENOTFOUND" || err.code === "EAI_AGAIN") {
     console.error("   💡 Hostname not found. Check your REDIS_URL environment variable.");
     console.error(`   Current URL: ${REDIS_URL.replace(/:[^:@]+@/, ":****@")}`);
   } else if (err.code === "ECONNREFUSED") {
     console.error("   💡 Connection refused. Is Redis running and accessible?");
-  } else if (err.code === "ETIMEDOUT") {
-    console.error("   💡 Connection timed out. Check firewall rules and network access.");
+  } else if (err.code === "ETIMEDOUT" || err.code === "ECONNRESET" || err.code === "EPIPE") {
+    console.error("   💡 Connection interrupted. Redis server may have closed the connection due to idle timeout.");
+    console.error("   Keepalive is configured to prevent this.");
+  } else if (err.code === "ECONNABORTED") {
+    console.error("   💡 Connection aborted. Network issue or server-side timeout.");
   }
 });
 
