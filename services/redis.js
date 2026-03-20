@@ -44,8 +44,9 @@ if (parsedUrl) {
 }
 
 // Create Redis client with robust retry configuration
+// NOTE: maxRetriesPerRequest is set to null for BullMQ compatibility
 const redisConfig = {
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: null,
   enableReadyCheck: true,
   lazyConnect: true, // Don't connect immediately, let us handle it
   retryStrategy(times) {

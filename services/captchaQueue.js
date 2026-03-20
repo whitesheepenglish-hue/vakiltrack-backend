@@ -53,7 +53,7 @@ let queueErrorCount = 0;
 
 if (REDIS_URL) {
   connection = new IORedis(REDIS_URL, {
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: null,  // Required for BullMQ compatibility
     enableReadyCheck: true,
     lazyConnect: true,
     retryStrategy(times) {
