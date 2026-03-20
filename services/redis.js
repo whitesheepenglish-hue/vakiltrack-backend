@@ -2,16 +2,7 @@ require("../config/loadEnv");
 
 const IORedis = require("ioredis");
 
-const redisConfig = {
-  connection: {
-    url: process.env.REDIS_URL,
-    maxRetriesPerRequest: null,
-  },
-};
-
-const redis = new IORedis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-});
+const redis = new IORedis(process.env.REDIS_URL);
 
 redis.on("error", (err) => {
   console.error("Redis Error:", err.message);
@@ -19,5 +10,4 @@ redis.on("error", (err) => {
 
 module.exports = {
   redis,
-  redisConfig,
 };
