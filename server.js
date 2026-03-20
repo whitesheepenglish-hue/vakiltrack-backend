@@ -107,6 +107,13 @@ app.post("/api/scrape/manual", async (req, res) => {
     const caseNumber = String(req.body?.caseNumber || "").trim();
     const captcha = String(req.body?.captcha || "").trim();
 
+    if (!sessionId) {
+      return res.status(400).json({
+        message: "Manual captcha submission failed",
+        error: "sessionId is required. Request /api/captcha?format=json first to create a live captcha session.",
+      });
+    }
+
     const result = await submitCaptchaSolution({
       sessionId,
       caseNumber,
@@ -157,7 +164,7 @@ app.get("/api/scrape/:caseno", async (req, res) => {
 
     res.json({
       message: data.captchaRequired
-        ? "Manual captcha required. Solve the returned captcha and POST it to /api/scrape/manual."
+        ? "Manual captcha required. Request /api/captcha?caseNumber=<CNR>&format=json, solve that live captcha, then POST sessionId, caseNumber, and captcha to /api/scrape/manual."
         : "Case processed",
       savedToDb: false,
       case: data,

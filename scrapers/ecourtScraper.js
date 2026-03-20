@@ -108,6 +108,16 @@ async function openEcourtsPage() {
   return { browser, page };
 }
 
+async function clearAndType(page, selector, value) {
+  await page.waitForSelector(selector, { timeout: 15_000 });
+  await page.click(selector, { clickCount: 3 });
+  await page.keyboard.press("Backspace");
+
+  if (value) {
+    await page.type(selector, value);
+  }
+}
+
 function extractValue(recordMap, labels) {
   for (const label of labels) {
     if (recordMap[label]) {
@@ -202,7 +212,7 @@ async function createCaptchaSession(caseNumber) {
 
   try {
     if (normalizedCaseNumber) {
-      await page.fill(CNR_INPUT_SELECTOR, normalizedCaseNumber);
+      await clearAndType(page, CNR_INPUT_SELECTOR, normalizedCaseNumber);
     }
 
     const captchaImage = await captureCaptchaImage(page);
@@ -273,8 +283,8 @@ async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
 
   const { page } = session;
 
-  await page.fill(CNR_INPUT_SELECTOR, normalizedCaseNumber);
-  await page.fill(CAPTCHA_INPUT_SELECTOR, normalizedCaptcha);
+  await clearAndType(page, CNR_INPUT_SELECTOR, normalizedCaseNumber);
+  await clearAndType(page, CAPTCHA_INPUT_SELECTOR, normalizedCaptcha);
   await page.click(SEARCH_BUTTON_SELECTOR);
   await sleep(2_000);
 
