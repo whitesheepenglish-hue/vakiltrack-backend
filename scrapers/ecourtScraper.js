@@ -152,7 +152,7 @@ function scheduleSessionCleanup(sessionId) {
 }
 
 async function captureCaptchaImage(page) {
-  await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 15_000 });
+  await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 30_000 });
   await sleep(1_000);
 
   const captchaElement = await page.$(CAPTCHA_SELECTOR);
@@ -277,7 +277,7 @@ async function openEcourtsPage() {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       }),
-      page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 15_000 }),
+      page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 30_000 }),
     ]);
 
     await page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15_000 });
