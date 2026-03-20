@@ -2,7 +2,7 @@ const { Worker } = require("bullmq");
 const scrapeCase = require("../scrapers/ecourtScraper");
 const { captchaQueue, connection } = require("../services/captchaQueue");
 
-const { getCachedCaptchaSession } = scrapeCase;
+const { createCaptchaSession } = scrapeCase;
 const CAPTCHA_POOL_INTERVAL_MS = 2000;
 const CAPTCHA_POOL_TARGET = 3;
 const workerLabel = `captcha-worker:${process.env.CAPTCHA_WORKER_INDEX || process.pid}`;
@@ -11,7 +11,7 @@ const captchaWorker = new Worker(
   "captcha",
   async (job) => {
     const caseNumber = String(job.data?.caseNumber || "").trim();
-    return getCachedCaptchaSession(caseNumber);
+    return await createCaptchaSession(caseNumber);
   },
   {
     connection,
