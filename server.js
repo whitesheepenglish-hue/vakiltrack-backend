@@ -1,8 +1,13 @@
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
-const { QueueEvents } = require("bullmq");
+
 require("./config/loadEnv");
+
+// Environment validation
+const { validateEnv } = require("./config/validateEnv");
+validateEnv();
+
 const connectDB = require("./config/db");
 const scrapeCase = require("./scrapers/ecourtScraper");
 const {
@@ -10,16 +15,21 @@ const {
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
-const { captchaQueue, connection } = require("./services/captchaQueue");
+const { captchaQueue, connection, isQueueHealthy } = require("./services/captchaQueue");
+const { isRedisHealthy } = require("./services/redis");
 
 const app = express();
-const captchaQueueEvents = new QueueEvents("captcha", { connection });
 const apiRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
 });
 
 const isDbConnected = () => Case?.db?.readyState === 1;
+
+// Graceful captcha queue check
+function getCaptchaQueue() {
+  return isQueueHealthy() ? captchaQueue : null;
+}
 
 app.use(express.json());
 app.use(cors());
@@ -33,11 +43,26 @@ app.get("/", (req, res) => {
   res.json({
     status: "VakilTrack API running",
     dbConnected: isDbConnected(),
+    redisHealthy: isRedisHealthy(),
+    queueHealthy: isQueueHealthy(),
   });
 });
 
-app.get("/health", (req, res) => {
-  res.send("OK");
+app.get("/health", async (req, res) => {
+  const health = {
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    services: {
+      database: isDbConnected() ? "connected" : "disconnected",
+      redis: isRedisHealthy() ? "healthy" : "unhealthy",
+      queue: isQueueHealthy() ? "healthy" : "unhealthy",
+    },
+  };
+
+  const allHealthy = Object.values(health.services).every(s => s === "connected" || s === "healthy");
+  const statusCode = allHealthy ? 200 : 503;
+
+  res.status(statusCode).json(health);
 });
 
 // USERS
@@ -51,9 +76,20 @@ app.get("/api/login", (req, res) => {
 });
 
 app.get("/api/captcha", async (req, res) => {
+  const queue = getCaptchaQueue();
+
+  if (!queue) {
+    return res.status(503).json({
+      error: "Captcha service unavailable",
+      message: "Redis queue is not healthy. Please check your Redis configuration.",
+      redisHealthy: isRedisHealthy(),
+      queueHealthy: isQueueHealthy(),
+    });
+  }
+
   try {
     const caseNumber = String(req.query.caseNumber || "").trim();
-    const job = await captchaQueue.add("generate", { caseNumber });
+    const job = await queue.add("generate", { caseNumber });
 
     return res.json({
       jobId: job.id,
@@ -73,8 +109,17 @@ app.get("/api/captcha", async (req, res) => {
 });
 
 app.get("/api/captcha/result/:jobId", async (req, res) => {
+  const queue = getCaptchaQueue();
+
+  if (!queue) {
+    return res.status(503).json({
+      error: "Captcha service unavailable",
+      message: "Redis queue is not healthy. Cannot fetch job result.",
+    });
+  }
+
   try {
-    const job = await captchaQueue.getJob(req.params.jobId);
+    const job = await queue.getJob(req.params.jobId);
 
     if (!job) return res.json({ status: "not_found" });
 
@@ -97,8 +142,17 @@ app.get("/api/captcha/result/:jobId", async (req, res) => {
 });
 
 app.get("/api/job/:id", async (req, res) => {
+  const queue = getCaptchaQueue();
+
+  if (!queue) {
+    return res.status(503).json({
+      error: "Job service unavailable",
+      message: "Redis queue is not healthy. Cannot fetch job status.",
+    });
+  }
+
   try {
-    const job = await captchaQueue.getJob(req.params.id);
+    const job = await queue.getJob(req.params.id);
 
     if (!job) {
       return res.status(404).send("Not found");
