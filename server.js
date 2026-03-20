@@ -21,13 +21,6 @@ const apiRateLimit = rateLimit({
 
 const isDbConnected = () => Case?.db?.readyState === 1;
 
-let dbConnection;
-try {
-  dbConnection = connectDB();
-} catch (err) {
-  dbConnection = Promise.reject(err);
-}
-
 app.use(express.json());
 app.use(cors());
 app.use(apiRateLimit);
@@ -182,17 +175,17 @@ app.get("/api/documents", (req, res) => {
 
 /* ---------------- SERVER ---------------- */
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 
 (async () => {
   app.locals.dbConnected = false;
 
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
   });
 
   try {
-    await dbConnection;
+    await connectDB();
     app.locals.dbConnected = true;
   } catch (err) {
     console.error("MongoDB Error:", err?.message || err);
