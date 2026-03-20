@@ -1,4 +1,6 @@
 const { randomUUID } = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const puppeteer = require("puppeteer");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
@@ -81,15 +83,67 @@ async function captureCaptchaImage(page) {
   return captchaElement.screenshot({ type: "png" });
 }
 
+function findChromeInDir(baseDir) {
+  if (!baseDir || !fs.existsSync(baseDir)) {
+    return null;
+  }
+
+  const versionDirs = fs.readdirSync(baseDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+
+  for (const versionDir of versionDirs) {
+    const candidate = path.join(baseDir, versionDir, "chrome-linux64", "chrome");
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveChromeExecutablePath() {
+  if (process.env.CHROME_EXECUTABLE_PATH) {
+    return process.env.CHROME_EXECUTABLE_PATH;
+  }
+
+  if (process.platform !== "linux") {
+    return null;
+  }
+
+  const candidateRoots = [
+    "/opt/render/.cache/puppeteer/chrome",
+    "/opt/render/project/.cache/puppeteer/chrome",
+  ];
+
+  for (const root of candidateRoots) {
+    const executablePath = findChromeInDir(root);
+    if (executablePath) {
+      return executablePath;
+    }
+  }
+
+  return null;
+}
+
 async function launchBrowser() {
-  return puppeteer.launch({
+  const executablePath = resolveChromeExecutablePath();
+  const launchOptions = {
     headless: true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
     ],
-  });
+  };
+
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
+
+  return puppeteer.launch(launchOptions);
 }
 
 async function openEcourtsPage() {
