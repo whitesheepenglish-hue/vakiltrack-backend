@@ -52,6 +52,7 @@ const {
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
+const authRoutes = require("./routes/auth");
 const { getCaptchaQueue: resolveCaptchaQueue, initializeQueue, isQueueHealthy, testQueueHealth } = require("./services/captchaQueue");
 const { isRedisHealthy, pingRedis, redis } = require("./services/redis");
 
@@ -95,6 +96,7 @@ app.use(express.json());
 app.use(cors());
 app.use(apiRateLimit);
 app.use("/api/cases", caseRoutes);
+app.use("/api/auth", authRoutes);
 
 /* ---------------- ROUTES ---------------- */
 

@@ -250,14 +250,10 @@ function resolveChromeExecutablePath() {
 async function launchBrowser() {
   const executablePath = resolveChromeExecutablePath();
   const launchOptions = {
-    headless: true,
+    headless: "new",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-web-security",
-      "--disable-features=IsolateOrigins,site-per-process",
     ],
   };
 
