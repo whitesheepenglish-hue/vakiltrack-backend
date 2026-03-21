@@ -1,6 +1,6 @@
 const { Worker } = require("bullmq");
 const scrapeCase = require("../scrapers/ecourtScraper");
-const { captchaQueue, connection, isQueueHealthy, waitForQueue } = require("../services/captchaQueue");
+const { getCaptchaQueue, connection, isQueueHealthy, waitForQueue } = require("../services/captchaQueue");
 
 const { createCaptchaSession } = scrapeCase;
 const CAPTCHA_POOL_INTERVAL_MS = 5000; // Increased to reduce load
@@ -74,6 +74,8 @@ async function startPoolRefill() {
   console.log(`[${workerLabel}] 🔄 Starting captcha pool refill interval`);
 
   poolInterval = setInterval(async () => {
+    const captchaQueue = getCaptchaQueue();
+
     // Skip if queue is not healthy
     if (!isQueueHealthy() || !captchaQueue) {
       return; // Silently skip without spamming logs

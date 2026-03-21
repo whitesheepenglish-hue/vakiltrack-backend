@@ -16,24 +16,45 @@ let queueErrorCount = 0;
 
 if (connection) {
   // Monitor shared connection status
-  connection.on("ready", () => {
+  connection.on("connect", () => {
+    console.log("📡 Redis 'connect' event - Queue connection established");
     isQueueAvailable = true;
     queueErrorCount = 0;
   });
 
-  connection.on("error", () => {
+  connection.on("ready", () => {
+    console.log("✅ Redis 'ready' event - Queue fully ready");
+    isQueueAvailable = true;
+    queueErrorCount = 0;
+  });
+
+  connection.on("error", (err) => {
     isQueueAvailable = false;
     queueErrorCount++;
+    console.error("❌ Queue Redis error:", err.message);
   });
 
   connection.on("close", () => {
     isQueueAvailable = false;
+    console.log("⚠️  Queue Redis connection closed");
   });
+  
+  connection.on("reconnecting", () => {
+    console.log("🔄 Queue Redis reconnecting...");
+  });
+  
+  // Set initial state based on current connection status
+  const currentStatus = connection.status;
+  isQueueAvailable = currentStatus === "ready" || currentStatus === "connect";
 }
 
 // Create queue with error handling - only after connection is ready
 let captchaQueue = null;
 let queueInitialized = false;
+
+function getCaptchaQueue() {
+  return captchaQueue;
+}
 
 async function initializeQueue() {
   if (!connection || queueInitialized) return;
@@ -85,9 +106,13 @@ async function initializeQueue() {
   }
 }
 
-// Start queue initialization
+// Start queue initialization with proper error handling
 if (connection) {
-  initializeQueue();
+  initializeQueue().catch(err => {
+    console.error("❌ Queue initialization failed:", err.message);
+  });
+} else {
+  console.warn("⚠️  No Redis connection available - BullMQ queue disabled");
 }
 
 // Graceful queue operations
@@ -106,7 +131,30 @@ async function safeQueueOperation(operation, fallback = null) {
 }
 
 function isQueueHealthy() {
-  return isQueueAvailable && queueInitialized && connection?.status === "ready";
+  if (!captchaQueue) return false;
+  if (!queueInitialized) return false;
+  
+  // Check Redis connection status
+  const redisStatus = connection?.status;
+  const isRedisReady = redisStatus === "ready" || redisStatus === "connect";
+  
+  // Queue is healthy if Redis is ready and queue was initialized
+  // We don't strictly require isQueueAvailable flag since it depends on events
+  return isRedisReady;
+}
+
+// Test if queue can actually perform operations
+async function testQueueHealth() {
+  const queue = getCaptchaQueue();
+  if (!queue) return false;
+  try {
+    // Try to get job counts as a health check
+    await queue.getJobCounts("waiting", "active", "completed", "failed");
+    return true;
+  } catch (error) {
+    console.error("❌ Queue health test failed:", error.message);
+    return false;
+  }
 }
 
 // Wait for queue to be ready
@@ -118,13 +166,14 @@ async function waitForQueue(timeoutMs = 30000) {
     }
     await new Promise(r => setTimeout(r, 100));
   }
-  return captchaQueue;
+  return getCaptchaQueue();
 }
 
 module.exports = {
-  captchaQueue,
   connection,
+  getCaptchaQueue,
   isQueueHealthy,
+  testQueueHealth,
   safeQueueOperation,
   isQueueAvailable: () => isQueueAvailable,
   waitForQueue,

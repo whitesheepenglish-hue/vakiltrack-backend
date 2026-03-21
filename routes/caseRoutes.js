@@ -1,11 +1,19 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const router = express.Router();
 const Case = require("../models/Case");
 
+// Check if MongoDB is connected using mongoose connection state
+const isDbConnected = () => mongoose.connection?.readyState === 1;
+
 router.get("/", async (req, res) => {
   try {
-    if (Case?.db?.readyState !== 1) {
-      return res.status(503).json({ error: "MongoDB is not connected" });
+    if (!isDbConnected()) {
+      return res.status(503).json({ 
+        error: "MongoDB is not connected",
+        readyState: mongoose.connection?.readyState || 0,
+        readyStateLabel: ["disconnected", "connected", "connecting", "disconnecting"][mongoose.connection?.readyState || 0],
+      });
     }
 
     const cases = await Case.find();
@@ -17,8 +25,12 @@ router.get("/", async (req, res) => {
 
 router.post("/add", async (req, res) => {
   try {
-    if (Case?.db?.readyState !== 1) {
-      return res.status(503).json({ error: "MongoDB is not connected" });
+    if (!isDbConnected()) {
+      return res.status(503).json({ 
+        error: "MongoDB is not connected",
+        readyState: mongoose.connection?.readyState || 0,
+        readyStateLabel: ["disconnected", "connected", "connecting", "disconnecting"][mongoose.connection?.readyState || 0],
+      });
     }
 
     const newCase = new Case(req.body);

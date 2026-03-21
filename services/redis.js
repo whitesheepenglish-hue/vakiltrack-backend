@@ -112,9 +112,28 @@ if (REDIS_URL) {
   console.error("❌ REDIS_URL not set. Redis is disabled.");
 }
 
-// Health check
+// Health check - more lenient to account for lazyConnect and various states
 function isRedisHealthy() {
-  return isConnected && isReady && redis?.status === "ready";
+  if (!redis) return false;
+  
+  // Check ioredis status (can be: wait, connecting, connect, ready, close, end)
+  const status = redis.status;
+  
+  // If we're connected or ready, consider it healthy
+  const isHealthy = status === "ready" || status === "connect" || (isConnected && isReady);
+  
+  return isHealthy;
+}
+
+// Ping Redis to verify actual connectivity
+async function pingRedis() {
+  if (!redis) return false;
+  try {
+    const result = await redis.ping();
+    return result === "PONG";
+  } catch (error) {
+    return false;
+  }
 }
 
 // Safe operations
@@ -161,6 +180,7 @@ module.exports = {
   redis,
   redisConfig,
   isRedisHealthy,
+  pingRedis,
   safeRedisOperation,
   waitForRedis,
   REDIS_URL,

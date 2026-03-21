@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
+const mongoose = require("mongoose");
 
 require("./config/loadEnv");
 
@@ -9,14 +10,26 @@ const { validateEnv } = require("./config/validateEnv");
 validateEnv();
 
 const connectDB = require("./config/db");
+
+// Initialize database connection
+let dbConnection = null;
+(async () => {
+  try {
+    dbConnection = await connectDB();
+    console.log("✅ Database connected successfully");
+  } catch (error) {
+    console.error("❌ Database connection failed:", error.message);
+    // Don't exit - allow server to run with degraded functionality
+  }
+})();
 const scrapeCase = require("./scrapers/ecourtScraper");
 const {
   submitCaptchaSolution,
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
-const { captchaQueue, isQueueHealthy } = require("./services/captchaQueue");
-const { isRedisHealthy } = require("./services/redis");
+const { getCaptchaQueue: resolveCaptchaQueue, isQueueHealthy, testQueueHealth } = require("./services/captchaQueue");
+const { isRedisHealthy, pingRedis, redis } = require("./services/redis");
 
 const app = express();
 const apiRateLimit = rateLimit({
@@ -24,11 +37,31 @@ const apiRateLimit = rateLimit({
   max: 10,
 });
 
-const isDbConnected = () => Case?.db?.readyState === 1;
+// Track database connection state
+let dbConnectionState = {
+  connected: false,
+  lastChecked: null,
+  error: null
+};
+
+// More robust database connection check
+const isDbConnected = () => {
+  // Check mongoose connection state directly
+  const mongooseState = mongoose.connection?.readyState;
+  // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+  const isConnected = mongooseState === 1;
+  
+  // Update tracking state
+  dbConnectionState.connected = isConnected;
+  dbConnectionState.lastChecked = new Date().toISOString();
+  
+  return isConnected;
+};
 
 // Graceful captcha queue check
 function getCaptchaQueue() {
-  return isQueueHealthy() ? captchaQueue : null;
+  const queue = resolveCaptchaQueue();
+  return isQueueHealthy() ? queue : null;
 }
 
 // NOTE: BullMQ Worker moved to separate worker process (jobs/captchaWorker.js)
@@ -42,27 +75,80 @@ app.use("/api/cases", caseRoutes);
 /* ---------------- ROUTES ---------------- */
 
 // Home
-app.get("/", (req, res) => {
+app.get("/", async (req, res) => {
+  // Test Redis ping for accurate status
+  let redisPing = false;
+  try {
+    redisPing = await pingRedis();
+  } catch (e) {
+    // ping failed
+  }
+  
+  // Test queue health
+  let queueTest = false;
+  try {
+    queueTest = await testQueueHealth();
+  } catch (e) {
+    // queue test failed
+  }
+  
   res.json({
     status: "VakilTrack API running",
     dbConnected: isDbConnected(),
     redisHealthy: isRedisHealthy(),
+    redisPing: redisPing ? "PONG" : "FAILED",
     queueHealthy: isQueueHealthy(),
+    queueTest: queueTest ? "OK" : "FAILED",
+    timestamp: new Date().toISOString(),
   });
 });
 
 app.get("/health", async (req, res) => {
+  const dbConnected = isDbConnected();
+  const redisHealthy = isRedisHealthy();
+  const queueHealthy = isQueueHealthy();
+  
+  // Test actual Redis connectivity with ping
+  let redisPing = false;
+  try {
+    redisPing = await pingRedis();
+  } catch (e) {
+    // ping failed
+  }
+  
+  // Test actual queue operations
+  let queueTest = false;
+  try {
+    queueTest = await testQueueHealth();
+  } catch (e) {
+    // queue test failed
+  }
+  
   const health = {
-    status: "OK",
+    status: dbConnected && redisHealthy ? "OK" : "DEGRADED",
     timestamp: new Date().toISOString(),
     services: {
-      database: isDbConnected() ? "connected" : "disconnected",
-      redis: isRedisHealthy() ? "healthy" : "unhealthy",
-      queue: isQueueHealthy() ? "healthy" : "unhealthy",
+      database: {
+        status: dbConnected ? "connected" : "disconnected",
+        readyState: mongoose.connection?.readyState || 0,
+        readyStateLabel: ["disconnected", "connected", "connecting", "disconnecting"][mongoose.connection?.readyState || 0],
+        lastChecked: dbConnectionState.lastChecked,
+      },
+      redis: {
+        status: redisHealthy ? "healthy" : "unhealthy",
+        ping: redisPing ? "PONG" : "FAILED",
+        statusDetail: redis?.status || "not initialized",
+        urlConfigured: !!process.env.REDIS_URL,
+      },
+      queue: {
+        status: queueHealthy ? "healthy" : "unhealthy",
+        operationsTest: queueTest ? "OK" : "FAILED",
+        queueInitialized: !!resolveCaptchaQueue(),
+      },
     },
   };
 
-  const allHealthy = Object.values(health.services).every(s => s === "connected" || s === "healthy");
+  const allHealthy = dbConnected && redisHealthy && queueHealthy;
   const statusCode = allHealthy ? 200 : 503;
 
   res.status(statusCode).json(health);
@@ -195,7 +281,7 @@ app.post("/api/scrape/manual", async (req, res) => {
     const caseData = result.case;
     let savedToDb = false;
 
-    if (caseData && result.ok && result.code === "SUCCESS" && Case?.db?.readyState === 1) {
+    if (caseData && result.ok && result.code === "SUCCESS" && isDbConnected()) {
       try {
         const newCase = new Case({
           caseNumber: caseData.caseNumber,

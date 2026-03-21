@@ -96,8 +96,17 @@ async function getSessionMetadata(id) {
     return null;
   }
 
-  const rawSession = await redis.get(getCaptchaSessionKey(id));
-  return rawSession ? JSON.parse(rawSession) : null;
+  if (!redis) {
+    return null;
+  }
+
+  try {
+    const rawSession = await redis.get(getCaptchaSessionKey(id));
+    return rawSession ? JSON.parse(rawSession) : null;
+  } catch (error) {
+    console.warn("Redis get failed:", error.message);
+    return null;
+  }
 }
 
 async function getSession(id) {
@@ -133,7 +142,14 @@ async function getSession(id) {
 async function closeCaptchaSession(sessionId, session = null) {
   const resolvedSession = session || await getSessionMetadata(sessionId).catch(() => null);
   captchaPages.delete(sessionId);
-  await redis.del(getCaptchaSessionKey(sessionId));
+  
+  if (redis) {
+    try {
+      await redis.del(getCaptchaSessionKey(sessionId));
+    } catch (error) {
+      console.warn("Redis del failed:", error.message);
+    }
+  }
 
   if (!resolvedSession) {
     return;
@@ -189,6 +205,23 @@ function resolveChromeExecutablePath() {
     return process.env.CHROME_EXECUTABLE_PATH;
   }
 
+  if (process.platform === "win32") {
+    // Windows: Check common Chrome paths
+    const windowsPaths = [
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
+    ].filter(Boolean);
+    
+    for (const winPath of windowsPaths) {
+      if (fs.existsSync(winPath)) {
+        console.log(`Found Chrome at: ${winPath}`);
+        return winPath;
+      }
+    }
+    return null;
+  }
+
   if (process.platform !== "linux") {
     return null;
   }
@@ -196,11 +229,15 @@ function resolveChromeExecutablePath() {
   const candidateRoots = [
     "/opt/render/.cache/puppeteer/chrome",
     "/opt/render/project/.cache/puppeteer/chrome",
+    "/home/render/.cache/puppeteer/chrome",
+    "/root/.cache/puppeteer/chrome",
+    "/.cache/puppeteer/chrome",
   ];
 
   for (const root of candidateRoots) {
     const executablePath = findChromeInDir(root);
     if (executablePath) {
+      console.log(`Found Chrome at: ${executablePath}`);
       return executablePath;
     }
   }
@@ -211,12 +248,14 @@ function resolveChromeExecutablePath() {
 async function launchBrowser() {
   const executablePath = resolveChromeExecutablePath();
   const launchOptions = {
-    headless: "new",
+    headless: true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      "--disable-web-security",
+      "--disable-features=IsolateOrigins,site-per-process",
     ],
   };
 
@@ -271,15 +310,50 @@ async function openEcourtsPage() {
   try {
     page = await browser.newPage();
     await page.setCacheEnabled(false);
+    await page.setViewport({ width: 1366, height: 768 });
 
-    await Promise.all([
-      page.goto(ECOURTS_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      }),
-      page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 30_000 }),
-    ]);
+    // Navigate to eCourts page
+    await page.goto(ECOURTS_URL, {
+      waitUntil: "networkidle2",
+      timeout: 60_000,
+    });
 
+    // Wait for page to fully load
+    await sleep(2_000);
+
+    // Check if we're on the right page
+    const currentUrl = page.url();
+    if (!currentUrl.includes("ecourts")) {
+      throw new Error(`Unexpected redirect to: ${currentUrl}`);
+    }
+
+    // Wait for captcha image with retries
+    let captchaLoaded = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 10_000 });
+        const captchaElement = await page.$(CAPTCHA_SELECTOR);
+        if (captchaElement) {
+          const isVisible = await captchaElement.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetWidth > 0;
+          });
+          if (isVisible) {
+            captchaLoaded = true;
+            break;
+          }
+        }
+      } catch (e) {
+        // Retry
+      }
+      await sleep(1_000);
+    }
+
+    if (!captchaLoaded) {
+      throw new Error("Captcha image failed to load after multiple attempts");
+    }
+
+    // Wait for other form elements
     await page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15_000 });
     await page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15_000 });
     await page.waitForSelector(SEARCH_BUTTON_SELECTOR, { timeout: 15_000 });
@@ -407,15 +481,23 @@ async function createCaptchaSession(caseNumber) {
       page,
       timeoutHandle,
     });
-    await redis.set(
-      getCaptchaSessionKey(sessionId),
-      JSON.stringify({
-        caseNumber: normalizedCaseNumber,
-        expiresAt,
-      }),
-      "EX",
-      Math.floor(CAPTCHA_SESSION_TTL_MS / 1000),
-    );
+
+    // Store session in Redis if available
+    if (redis) {
+      try {
+        await redis.set(
+          getCaptchaSessionKey(sessionId),
+          JSON.stringify({
+            caseNumber: normalizedCaseNumber,
+            expiresAt,
+          }),
+          "EX",
+          Math.floor(CAPTCHA_SESSION_TTL_MS / 1000),
+        );
+      } catch (error) {
+        console.warn("Redis set failed, using local-only session:", error.message);
+      }
+    }
 
     return {
       sessionId,
@@ -488,15 +570,23 @@ async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
   }
 
   session.caseNumber = normalizedCaseNumber;
-  await redis.set(
-    getCaptchaSessionKey(sessionId),
-    JSON.stringify({
-      caseNumber: normalizedCaseNumber,
-      expiresAt: session.expiresAt,
-    }),
-    "EX",
-    Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1000)),
-  );
+  
+  // Update session in Redis if available
+  if (redis) {
+    try {
+      await redis.set(
+        getCaptchaSessionKey(sessionId),
+        JSON.stringify({
+          caseNumber: normalizedCaseNumber,
+          expiresAt: session.expiresAt,
+        }),
+        "EX",
+        Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1000)),
+      );
+    } catch (error) {
+      console.warn("Redis update failed:", error.message);
+    }
+  }
 
   const { page } = session;
 
