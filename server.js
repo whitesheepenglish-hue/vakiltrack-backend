@@ -53,6 +53,7 @@ const {
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
 const authRoutes = require("./routes/auth");
+const userRoutes = require("./routes/user");
 const { getCaptchaQueue: resolveCaptchaQueue, initializeQueue, isQueueHealthy, testQueueHealth } = require("./services/captchaQueue");
 const { isRedisHealthy, pingRedis, redis } = require("./services/redis");
 
@@ -97,6 +98,7 @@ app.use(cors());
 app.use(apiRateLimit);
 app.use("/api/cases", caseRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/user", userRoutes);
 
 /* ---------------- ROUTES ---------------- */
 
