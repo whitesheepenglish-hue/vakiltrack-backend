@@ -28,7 +28,7 @@ const {
 } = scrapeCase;
 const Case = require("./models/Case");
 const caseRoutes = require("./routes/caseRoutes");
-const { getCaptchaQueue: resolveCaptchaQueue, isQueueHealthy, testQueueHealth } = require("./services/captchaQueue");
+const { getCaptchaQueue: resolveCaptchaQueue, initializeQueue, isQueueHealthy, testQueueHealth } = require("./services/captchaQueue");
 const { isRedisHealthy, pingRedis, redis } = require("./services/redis");
 
 const app = express();
@@ -59,8 +59,8 @@ const isDbConnected = () => {
 };
 
 // Graceful captcha queue check
-function getCaptchaQueue() {
-  const queue = resolveCaptchaQueue();
+async function getCaptchaQueue() {
+  const queue = await initializeQueue().catch(() => resolveCaptchaQueue());
   return isQueueHealthy() ? queue : null;
 }
 
@@ -165,7 +165,7 @@ app.get("/api/login", (req, res) => {
 });
 
 app.get("/api/captcha", async (req, res) => {
-  const queue = getCaptchaQueue();
+  const queue = await getCaptchaQueue();
 
   if (!queue) {
     return res.status(503).json({
@@ -198,7 +198,7 @@ app.get("/api/captcha", async (req, res) => {
 });
 
 app.get("/api/captcha/result/:jobId", async (req, res) => {
-  const queue = getCaptchaQueue();
+  const queue = await getCaptchaQueue();
 
   if (!queue) {
     return res.status(503).json({
@@ -231,7 +231,7 @@ app.get("/api/captcha/result/:jobId", async (req, res) => {
 });
 
 app.get("/api/job/:id", async (req, res) => {
-  const queue = getCaptchaQueue();
+  const queue = await getCaptchaQueue();
 
   if (!queue) {
     return res.status(503).json({
