@@ -1,9 +1,8 @@
+require("./config/loadEnv");
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const mongoose = require("mongoose");
-
-require("./config/loadEnv");
 
 // Environment validation
 const { validateEnv } = require("./config/validateEnv");
@@ -13,8 +12,6 @@ const connectDB = require("./config/db");
 
 // Initialize database connection
 let dbConnection = null;
-let dbConnectionAttempts = 0;
-const MAX_DB_ATTEMPTS = 3;
 /* (async () => {
   try {
     dbConnection = await connectDB();
@@ -29,16 +26,10 @@ async function connectDatabase() {
   try {
     dbConnection = await connectDB();
     console.log("Database connected successfully");
-    dbConnectionAttempts = 0;
     return true;
   } catch (error) {
-    dbConnectionAttempts++;
-    console.error(`Database connection failed (attempt ${dbConnectionAttempts}):`, error.message);
-
-    if (dbConnectionAttempts < MAX_DB_ATTEMPTS) {
-      console.log("Retrying database connection in 5 seconds...");
-      setTimeout(connectDatabase, 5000);
-    }
+    // connectDB already applies exponential backoff and detailed error logging.
+    console.error("Database connection failed:", error.message);
     return false;
   }
 }

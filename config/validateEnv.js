@@ -1,6 +1,6 @@
 /**
  * Environment Variable Validation Module
- * Validates all required environment variables on application startup
+ * Validates connection settings before the app starts accepting traffic.
  */
 
 require("./loadEnv");
@@ -13,86 +13,137 @@ const REQUIRED_VARS = [
 
 const VALIDATION_RULES = {
   MONGO_URI: {
-    pattern: /^mongodb\+srv?:\/\//,
     message: "Must be a valid MongoDB connection string (mongodb:// or mongodb+srv://)",
   },
   REDIS_URL: {
-    pattern: /^rediss?:\/\//,
     message: "Must be a valid Redis connection string (redis:// or rediss://)",
   },
 };
 
-/**
- * Check if a Redis hostname is likely incomplete (internal Render name)
- */
-function isIncompleteRedisHost(url) {
+function redactUrl(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (/^mongodb:\/\//.test(value)) {
+    return String(value).replace(/(mongodb:\/\/)([^:\/@]+)(?::[^@]*)?@/, "$1****:****@");
+  }
+
+  if (/^mongodb\+srv:\/\//.test(value)) {
+    return String(value).replace(/(mongodb\+srv:\/\/)([^:\/@]+)(?::[^@]*)?@/, "$1****:****@");
+  }
+
   try {
-    const parsed = new URL(url);
-    // Render internal names look like "red-xxxxx" without domain
-    return parsed.hostname && /^red-[a-z0-9]+$/.test(parsed.hostname);
+    const parsed = new URL(value);
+    const hasPassword = parsed.password.length > 0;
+    const hasUsername = parsed.username.length > 0;
+
+    if (hasPassword) {
+      parsed.password = "****";
+    }
+
+    if (hasUsername && !hasPassword) {
+      parsed.username = "****";
+    }
+
+    return parsed.toString();
   } catch {
-    return false;
+    return String(value).replace(/\/\/([^:\/@]+)(?::[^@]*)?@/, "//****:****@");
   }
 }
 
-/**
- * Get suggested fix for Redis URL issues
- */
-function getRedisUrlSuggestion(url) {
-  const suggestions = [];
+function validateMongoUri(value) {
+  const errors = [];
 
-  if (isIncompleteRedisHost(url)) {
-    suggestions.push("The hostname looks like an internal Render service name.");
-    suggestions.push("Options to fix:");
-    suggestions.push("  1. Use the external Redis URL from your Render dashboard");
-    suggestions.push("  2. Add the full domain: red-xxxxx.internal or red-xxxxx.render.com");
-    suggestions.push("  3. If on Render, ensure your services are in the same private network");
+  if (!/^mongodb(?:\+srv)?:\/\//.test(value)) {
+    errors.push(VALIDATION_RULES.MONGO_URI.message);
+    return errors;
   }
 
-  if (!url.includes(":")) {
-    suggestions.push("Missing port. Default is 6379.");
+  try {
+    const withoutScheme = value.replace(/^mongodb(?:\+srv)?:\/\//, "");
+    const authorityAndPath = withoutScheme.split("/")[0] || "";
+    const authority = authorityAndPath.split("?")[0] || "";
+    const hostsSegment = authority.includes("@")
+      ? authority.slice(authority.lastIndexOf("@") + 1)
+      : authority;
+    const hosts = hostsSegment.split(",").map((host) => host.trim()).filter(Boolean);
+
+    if (hosts.length === 0) {
+      errors.push("MONGO_URI must include at least one hostname");
+    }
+
+    for (const host of hosts) {
+      const normalizedHost = host.startsWith("[") ? host : host.split(":")[0];
+      if (!normalizedHost) {
+        errors.push("MONGO_URI contains an empty hostname");
+      }
+    }
+  } catch (error) {
+    errors.push(`MONGO_URI could not be parsed: ${error.message}`);
   }
 
-  return suggestions;
+  return errors;
 }
 
-/**
- * Validate a single environment variable
- */
-function validateVar(config) {
-  const { key, required } = config;
-  const value = process.env[key];
+function validateRedisUri(value) {
   const errors = [];
   const warnings = [];
 
-  // Check if required
+  if (!/^rediss?:\/\//.test(value)) {
+    errors.push(VALIDATION_RULES.REDIS_URL.message);
+    return { errors, warnings };
+  }
+
+  try {
+    const parsed = new URL(value);
+
+    if (!parsed.hostname) {
+      errors.push("REDIS_URL must include a hostname");
+    }
+
+    if (parsed.protocol === "rediss:" && parsed.port && parsed.port !== "6379") {
+      warnings.push("REDIS_URL uses TLS with a non-default port; verify this matches your provider settings");
+    }
+
+    if (parsed.hostname && /^red-[a-z0-9]+$/.test(parsed.hostname)) {
+      warnings.push("REDIS_URL hostname looks like an internal Render service name");
+      warnings.push("Use the external Render Redis URL unless your services share a private network");
+    }
+
+    if (parsed.hostname === "localhost" && process.env.NODE_ENV === "production") {
+      warnings.push("REDIS_URL points to localhost in production");
+    }
+  } catch (error) {
+    errors.push(`REDIS_URL could not be parsed: ${error.message}`);
+  }
+
+  return { errors, warnings };
+}
+
+function validateVar(config) {
+  const { key, required } = config;
+  const value = String(process.env[key] || "").trim();
+  const errors = [];
+  const warnings = [];
+
   if (required && !value) {
     errors.push(`${key} is required but not set`);
     return { key, valid: false, errors, warnings };
   }
 
-  // If not set and not required, skip validation
   if (!value) {
     return { key, valid: true, errors, warnings, skipped: true };
   }
 
-  // Apply pattern validation
-  const rule = VALIDATION_RULES[key];
-  if (rule && !rule.pattern.test(value)) {
-    errors.push(`${key} format invalid: ${rule.message}`);
+  if (key === "MONGO_URI") {
+    errors.push(...validateMongoUri(value));
   }
 
-  // Specific Redis URL validation
   if (key === "REDIS_URL") {
-    if (isIncompleteRedisHost(value)) {
-      warnings.push(`${key} appears to have an incomplete hostname`);
-      warnings.push(...getRedisUrlSuggestion(value));
-    }
-
-    // Check for common mistakes
-    if (value.includes("localhost") && process.env.NODE_ENV === "production") {
-      warnings.push(`${key} points to localhost in production environment`);
-    }
+    const redisValidation = validateRedisUri(value);
+    errors.push(...redisValidation.errors);
+    warnings.push(...redisValidation.warnings);
   }
 
   return {
@@ -100,53 +151,44 @@ function validateVar(config) {
     valid: errors.length === 0,
     errors,
     warnings,
-    value: value ? `${value.substring(0, 20)}...` : null,
+    sanitizedValue: redactUrl(value),
   };
 }
 
-/**
- * Run full environment validation
- */
 function validateEnv() {
-  console.log("🔍 Validating environment variables...\n");
+  console.log("Validating environment variables...");
 
   const results = REQUIRED_VARS.map(validateVar);
-  let hasErrors = false;
-  let hasWarnings = false;
+  const errorMessages = [];
 
   for (const result of results) {
-    if (result.errors.length > 0) {
-      hasErrors = true;
-      console.error(`❌ ${result.key}`);
-      result.errors.forEach((err) => console.error(`   - ${err}`));
-    } else if (result.warnings.length > 0) {
-      hasWarnings = true;
-      console.warn(`⚠️  ${result.key}`);
-      result.warnings.forEach((warn) => console.warn(`   - ${warn}`));
-    } else if (!result.skipped) {
-      console.log(`✅ ${result.key}`);
+    if (result.skipped) {
+      continue;
+    }
+
+    if (result.valid) {
+      console.log(`${result.key}: ${result.sanitizedValue}`);
+    }
+
+    for (const warning of result.warnings) {
+      console.warn(`${result.key} warning: ${warning}`);
+    }
+
+    for (const error of result.errors) {
+      errorMessages.push(`${result.key}: ${error}`);
     }
   }
 
-  console.log("");
-
-  if (hasErrors) {
-    console.error("❌ Environment validation failed!");
-    console.error("Please fix the errors above before starting the application.\n");
-    return { valid: false, hasErrors, hasWarnings };
+  if (errorMessages.length > 0) {
+    throw new Error(`Environment validation failed:\n${errorMessages.join("\n")}`);
   }
 
-  if (hasWarnings) {
-    console.warn("⚠️  Environment validation passed with warnings.\n");
-  } else {
-    console.log("✅ All environment variables validated successfully.\n");
-  }
-
-  return { valid: true, hasErrors, hasWarnings };
+  return { valid: true };
 }
 
 module.exports = {
+  redactUrl,
   validateEnv,
-  isIncompleteRedisHost,
-  getRedisUrlSuggestion,
+  validateMongoUri,
+  validateRedisUri,
 };
