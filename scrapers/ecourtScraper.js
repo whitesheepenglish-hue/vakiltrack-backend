@@ -14,6 +14,8 @@ const CAPTCHA_SESSION_TTL_MS = 10 * 60 * 1000;
 const MAX_PAGES = Number(process.env.MAX_PAGES || 10);
 const PAGE_WAIT_MS = 100;
 const BROWSER_RESTART_INTERVAL_MS = 1000 * 60 * 10;
+const PAGE_LOAD_TIMEOUT = 60000;
+const CAPTCHA_LOAD_TIMEOUT = 30000;
 const captchaPages = new Map();
 const captchaCache = new NodeCache({ stdTTL: 60 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -309,59 +311,28 @@ async function openEcourtsPage() {
 
   try {
     page = await browser.newPage();
+    await page.setDefaultNavigationTimeout(PAGE_LOAD_TIMEOUT);
+    await page.setDefaultTimeout(PAGE_LOAD_TIMEOUT);
     await page.setCacheEnabled(false);
     await page.setViewport({ width: 1366, height: 768 });
 
-    // Navigate to eCourts page
+    // Navigate with better timeout handling
     await page.goto(ECOURTS_URL, {
       waitUntil: "networkidle2",
-      timeout: 60_000,
+      timeout: PAGE_LOAD_TIMEOUT,
     });
 
-    // Wait for page to fully load
-    await sleep(2_000);
-
-    // Check if we're on the right page
-    const currentUrl = page.url();
-    if (!currentUrl.includes("ecourts")) {
-      throw new Error(`Unexpected redirect to: ${currentUrl}`);
-    }
-
-    // Wait for captcha image with retries
-    let captchaLoaded = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 10_000 });
-        const captchaElement = await page.$(CAPTCHA_SELECTOR);
-        if (captchaElement) {
-          const isVisible = await captchaElement.evaluate(el => {
-            const style = window.getComputedStyle(el);
-            return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetWidth > 0;
-          });
-          if (isVisible) {
-            captchaLoaded = true;
-            break;
-          }
-        }
-      } catch (e) {
-        // Retry
-      }
-      await sleep(1_000);
-    }
-
-    if (!captchaLoaded) {
-      throw new Error("Captcha image failed to load after multiple attempts");
-    }
-
-    // Wait for other form elements
-    await page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15_000 });
-    await page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15_000 });
-    await page.waitForSelector(SEARCH_BUTTON_SELECTOR, { timeout: 15_000 });
+    // Wait for critical elements with retries
+    await Promise.all([
+      page.waitForSelector(CAPTCHA_SELECTOR, { timeout: CAPTCHA_LOAD_TIMEOUT }),
+      page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15000 }),
+      page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15000 }),
+    ]);
 
     return { browser, page };
   } catch (error) {
     await closePage(page);
-    throw error;
+    throw new Error(`Failed to load eCourts page: ${error.message}`);
   }
 }
 

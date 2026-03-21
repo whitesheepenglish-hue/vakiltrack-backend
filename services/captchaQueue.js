@@ -21,6 +21,7 @@ function getCaptchaQueue() {
 
 async function initializeQueue() {
   if (!connection) {
+    console.error("Redis connection not available for BullMQ");
     return null;
   }
 
@@ -33,38 +34,40 @@ async function initializeQueue() {
   }
 
   initializePromise = (async () => {
-    await waitForRedis(30000);
+    try {
+      await waitForRedis(30000);
 
-    if (!captchaQueue) {
-      captchaQueue = new Queue("captcha", {
-        connection,
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 1000,
+      if (!captchaQueue) {
+        captchaQueue = new Queue("captcha", {
+          connection,
+          defaultJobOptions: {
+            attempts: 3,
+            backoff: {
+              type: "exponential",
+              delay: 1000,
+            },
+            removeOnComplete: 100,
+            removeOnFail: 50,
           },
-          removeOnComplete: 10,
-          removeOnFail: 5,
-        },
-      });
+        });
 
-      captchaQueue.on("error", (error) => {
-        lastQueueError = error;
-        console.error("Captcha queue error:", error.message);
-      });
+        captchaQueue.on("error", (error) => {
+          lastQueueError = error;
+          console.error("Captcha queue error:", error.message);
+        });
+      }
+
+      queueInitialized = true;
+      lastQueueError = null;
+      return captchaQueue;
+    } catch (error) {
+      console.error("Queue initialization failed:", error.message);
+      lastQueueError = error;
+      return null;
     }
-
-    queueInitialized = true;
-    lastQueueError = null;
-    return captchaQueue;
   })();
 
-  try {
-    return await initializePromise;
-  } finally {
-    initializePromise = null;
-  }
+  return initializePromise;
 }
 
 if (connection) {

@@ -13,7 +13,9 @@ const connectDB = require("./config/db");
 
 // Initialize database connection
 let dbConnection = null;
-(async () => {
+let dbConnectionAttempts = 0;
+const MAX_DB_ATTEMPTS = 3;
+/* (async () => {
   try {
     dbConnection = await connectDB();
     console.log("✅ Database connected successfully");
@@ -21,7 +23,27 @@ let dbConnection = null;
     console.error("❌ Database connection failed:", error.message);
     // Don't exit - allow server to run with degraded functionality
   }
-})();
+})(); */
+
+async function connectDatabase() {
+  try {
+    dbConnection = await connectDB();
+    console.log("Database connected successfully");
+    dbConnectionAttempts = 0;
+    return true;
+  } catch (error) {
+    dbConnectionAttempts++;
+    console.error(`Database connection failed (attempt ${dbConnectionAttempts}):`, error.message);
+
+    if (dbConnectionAttempts < MAX_DB_ATTEMPTS) {
+      console.log("Retrying database connection in 5 seconds...");
+      setTimeout(connectDatabase, 5000);
+    }
+    return false;
+  }
+}
+
+connectDatabase();
 const scrapeCase = require("./scrapers/ecourtScraper");
 const {
   getCachedCaptchaSession,

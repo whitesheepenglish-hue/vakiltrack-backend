@@ -41,6 +41,9 @@ if (parsedUrl) {
 
 const redisConfig = {
   maxRetriesPerRequest: null,
+  enableReadyCheck: true,
+  connectTimeout: 10000,
+  lazyConnect: false,
 };
 
 const redis = REDIS_URL ? new IORedis(REDIS_URL, redisConfig) : null;
@@ -82,7 +85,7 @@ if (redis) {
 
 function isRedisHealthy() {
   if (!redis) return false;
-  return redis.status === "ready" || (isConnected && isReady);
+  return redis.status === "ready" && isConnected && isReady;
 }
 
 async function pingRedis() {

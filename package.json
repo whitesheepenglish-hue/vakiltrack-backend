@@ -4,10 +4,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "worker:captcha": "node jobs/captchaWorker.js",
-    "worker:captcha:multi": "node scripts/runCaptchaWorkers.js",
-    "postinstall": "npx puppeteer browsers install chrome",
-    "build:render": "node -e \"console.log('Render build complete')\""
+    "dev": "nodemon server.js",
+    "worker": "node jobs/captchaWorker.js",
+    "workers": "node scripts/runCaptchaWorkers.js",
+    "diagnose": "node scripts/diagnoseRedis.js",
+    "scrape": "node scripts/runScraper.js"
   },
   "dependencies": {
     "axios": "^1.13.6",

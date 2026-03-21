@@ -92,6 +92,7 @@ const connectDB = async (mongoUri) => {
         },
       });
 
+      await mongoose.connection.db.admin().command({ ping: 1 });
       console.log("MongoDB connected");
       return mongoose.connection;
     } catch (err) {
