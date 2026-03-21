@@ -24,6 +24,8 @@ let dbConnection = null;
 })();
 const scrapeCase = require("./scrapers/ecourtScraper");
 const {
+  getCachedCaptchaSession,
+  refreshCaptcha,
   submitCaptchaSolution,
 } = scrapeCase;
 const Case = require("./models/Case");
@@ -165,34 +167,50 @@ app.get("/api/login", (req, res) => {
 });
 
 app.get("/api/captcha", async (req, res) => {
-  const queue = await getCaptchaQueue();
-
-  if (!queue) {
-    return res.status(503).json({
-      error: "Captcha service unavailable",
-      message: "Redis queue is not healthy. Please check your Redis configuration.",
-      redisHealthy: isRedisHealthy(),
-      queueHealthy: isQueueHealthy(),
-    });
-  }
-
   try {
     const caseNumber = String(req.query.caseNumber || "").trim();
-    const job = await queue.add("generate", { caseNumber });
+    const challenge = await getCachedCaptchaSession(caseNumber);
 
     return res.json({
-      jobId: job.id,
-      status: "queued"
+      status: "ready",
+      sessionId: challenge.sessionId,
+      caseNumber: challenge.caseNumber,
+      expiresAt: challenge.expiresAt,
+      captchaImageBase64: challenge.imageBase64,
+      note: "Solve this live captcha immediately, then POST sessionId, caseNumber, and captcha to /api/scrape/manual on this same API instance.",
     });
   } catch (error) {
     console.error("CAPTCHA ERROR:", error);
-    const redisUrl = String(process.env.REDIS_URL || "").trim();
-    const hint = redisUrl
-      ? `Redis is configured as ${redisUrl}. Make sure that Redis is reachable and the BullMQ captcha worker is online before requesting /api/captcha.`
-      : "REDIS_URL is not set. Configure a reachable Redis instance and start the BullMQ captcha worker before requesting /api/captcha.";
     return res.status(500).json({
-      error: error.message,
-      hint,
+      error: "Captcha session creation failed",
+      detail: String(error?.message || error),
+    });
+  }
+});
+
+app.post("/api/captcha/refresh", async (req, res) => {
+  try {
+    const sessionId = String(req.body?.sessionId || "").trim();
+
+    if (!sessionId) {
+      return res.status(400).json({
+        error: "sessionId is required",
+      });
+    }
+
+    const refreshed = await refreshCaptcha(sessionId);
+
+    return res.json({
+      status: "ready",
+      sessionId: refreshed.sessionId,
+      caseNumber: refreshed.caseNumber,
+      expiresAt: refreshed.expiresAt,
+      captchaImageBase64: refreshed.imageBase64,
+    });
+  } catch (error) {
+    console.error("CAPTCHA REFRESH ERROR:", error);
+    return res.status(400).json({
+      error: String(error?.message || error),
     });
   }
 });

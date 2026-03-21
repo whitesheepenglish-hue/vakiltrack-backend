@@ -41,36 +41,13 @@ if (parsedUrl) {
 
 const redisConfig = {
   maxRetriesPerRequest: null,
-  enableReadyCheck: true,
-  enableOfflineQueue: true,
-  lazyConnect: true,
-  keepAlive: 30000,
-  connectTimeout: 30000,
-  commandTimeout: 10000,
-  retryStrategy(times) {
-    const delay = Math.min(times * 200, 10000);
-    console.log(`Redis retry attempt ${times}, next in ${delay}ms...`);
-    return delay;
-  },
-  reconnectOnError(err) {
-    const targetErrors = ["ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EPIPE", "ECONNABORTED"];
-    const errMsg = err.message || err.code || "";
-    const shouldReconnect = targetErrors.some((code) => errMsg.includes(code));
-    if (shouldReconnect) {
-      console.log(`Redis will reconnect due to: ${errMsg}`);
-    }
-    return shouldReconnect;
-  },
-  tls: REDIS_URL.startsWith("rediss://") ? { rejectUnauthorized: false } : undefined,
 };
 
-let redis = null;
+const redis = REDIS_URL ? new IORedis(REDIS_URL, redisConfig) : null;
 let isConnected = false;
 let isReady = false;
 
-if (REDIS_URL) {
-  redis = new IORedis(REDIS_URL, redisConfig);
-
+if (redis) {
   redis.on("connect", () => {
     isConnected = true;
     console.log("Redis connected");
