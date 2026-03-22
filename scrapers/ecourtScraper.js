@@ -10,7 +10,7 @@ const CAPTCHA_SELECTOR = "#captcha_image";
 const CNR_INPUT_SELECTOR = "#cino";
 const CAPTCHA_INPUT_SELECTOR = "#fcaptcha_code";
 const SEARCH_BUTTON_SELECTOR = "#searchbtn";
-const CAPTCHA_SESSION_TTL_MS = 10 * 60 * 1000;
+const CAPTCHA_SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_PAGES = Number(process.env.MAX_PAGES || 10);
 const PAGE_WAIT_MS = 100;
 const BROWSER_RESTART_INTERVAL_MS = 1000 * 60 * 10;
@@ -459,7 +459,7 @@ async function createCaptchaSession(caseNumber) {
             expiresAt,
           }),
           "EX",
-          Math.floor(CAPTCHA_SESSION_TTL_MS / 1000),
+          300,
         );
       } catch (error) {
         console.warn("Redis set failed, using local-only session:", error.message);
@@ -548,7 +548,7 @@ async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
           expiresAt: session.expiresAt,
         }),
         "EX",
-        Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1000)),
+        300,
       );
     } catch (error) {
       console.warn("Redis update failed:", error.message);

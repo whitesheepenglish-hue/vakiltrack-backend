@@ -12,6 +12,26 @@ const connectDB = require("./config/db");
 
 // Initialize database connection
 let dbConnection = null;
+let isDbConnected = false;
+let dbConnectionState = {
+  connected: false,
+  lastChecked: null,
+  error: null
+};
+
+mongoose.connection.on("connected", () => {
+  console.log("MongoDB connected");
+  isDbConnected = true;
+  dbConnectionState.connected = true;
+  dbConnectionState.lastChecked = new Date().toISOString();
+  dbConnectionState.error = null;
+});
+
+mongoose.connection.on("disconnected", () => {
+  isDbConnected = false;
+  dbConnectionState.connected = false;
+  dbConnectionState.lastChecked = new Date().toISOString();
+});
 /* (async () => {
   try {
     dbConnection = await connectDB();
@@ -30,6 +50,8 @@ async function connectDatabase() {
   } catch (error) {
     // connectDB already applies exponential backoff and detailed error logging.
     console.error("Database connection failed:", error.message);
+    dbConnectionState.error = error.message;
+    dbConnectionState.lastChecked = new Date().toISOString();
     return false;
   }
 }
@@ -54,27 +76,6 @@ const apiRateLimit = rateLimit({
   max: 10,
 });
 
-// Track database connection state
-let dbConnectionState = {
-  connected: false,
-  lastChecked: null,
-  error: null
-};
-
-// More robust database connection check
-const isDbConnected = () => {
-  // Check mongoose connection state directly
-  const mongooseState = mongoose.connection?.readyState;
-  // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
-  const isConnected = mongooseState === 1;
-  
-  // Update tracking state
-  dbConnectionState.connected = isConnected;
-  dbConnectionState.lastChecked = new Date().toISOString();
-  
-  return isConnected;
-};
-
 // Graceful captcha queue check
 async function getCaptchaQueue() {
   const queue = await initializeQueue().catch(() => resolveCaptchaQueue());
@@ -94,36 +95,16 @@ app.use("/api/user", userRoutes);
 /* ---------------- ROUTES ---------------- */
 
 // Home
-app.get("/", async (req, res) => {
-  // Test Redis ping for accurate status
-  let redisPing = false;
-  try {
-    redisPing = await pingRedis();
-  } catch (e) {
-    // ping failed
-  }
-  
-  // Test queue health
-  let queueTest = false;
-  try {
-    queueTest = await testQueueHealth();
-  } catch (e) {
-    // queue test failed
-  }
-  
+app.get("/", (req, res) => {
   res.json({
     status: "VakilTrack API running",
-    dbConnected: isDbConnected(),
-    redisHealthy: isRedisHealthy(),
-    redisPing: redisPing ? "PONG" : "FAILED",
-    queueHealthy: isQueueHealthy(),
-    queueTest: queueTest ? "OK" : "FAILED",
-    timestamp: new Date().toISOString(),
+    dbConnected: isDbConnected,
+    redisHealthy: true
   });
 });
 
 app.get("/health", async (req, res) => {
-  const dbConnected = isDbConnected();
+  const dbConnected = isDbConnected;
   const redisHealthy = isRedisHealthy();
   const queueHealthy = isQueueHealthy();
   
@@ -316,7 +297,7 @@ app.post("/api/scrape/manual", async (req, res) => {
     const caseData = result.case;
     let savedToDb = false;
 
-    if (caseData && result.ok && result.code === "SUCCESS" && isDbConnected()) {
+    if (caseData && result.ok && result.code === "SUCCESS" && isDbConnected) {
       try {
         const newCase = new Case({
           caseNumber: caseData.caseNumber,
