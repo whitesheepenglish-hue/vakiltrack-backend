@@ -2,7 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const retry = require('../utils/retry');
 const { getNextProxy, markProxyFailure } = require('../utils/proxyPool');
-const { HttpsProxyAgent } = require('https-proxy-agent');
+const HttpsProxyAgent = require('https-proxy-agent');
 const { fetchCaseWithBrowser } = require('./puppeteerService');
 
 const parseHtml = (html) => {
