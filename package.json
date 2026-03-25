@@ -33,6 +33,8 @@
     "puppeteer": "^22.8.2",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0",
     "tough-cookie": "^6.0.1"
   },
   "engines": {
