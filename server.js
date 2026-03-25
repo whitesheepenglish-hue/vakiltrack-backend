@@ -69,6 +69,7 @@ const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/user");
 const { getCaptchaQueue: resolveCaptchaQueue, initializeQueue, isQueueHealthy, testQueueHealth } = require("./services/captchaQueue");
 const { isRedisHealthy, pingRedis, redis } = require("./services/redis");
+const { fetchCaseFromECourts } = require("./services/fetchCaseService");
 
 const app = express();
 const apiRateLimit = rateLimit({
@@ -270,6 +271,24 @@ app.get("/api/job/:id", async (req, res) => {
   } catch (error) {
     console.error("JOB STATUS ERROR:", error);
     return res.status(500).json({
+      error: error.message,
+    });
+  }
+});
+
+app.post("/api/fetch-case", async (req, res) => {
+  try {
+    console.log("📥 Fetch केस request:", req.body);
+
+    const result = await fetchCaseFromECourts(req.body);
+
+    res.json(result);
+  } catch (error) {
+    console.error("❌ Final Failure:", error.message);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed after retries",
       error: error.message,
     });
   }

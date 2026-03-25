@@ -12,14 +12,17 @@
   },
   "dependencies": {
     "axios": "^1.13.6",
+    "axios-cookiejar-support": "^6.0.5",
     "bcryptjs": "^3.0.3",
+    "body-parser": "^2.2.2",
     "bullmq": "^5.71.0",
     "cheerio": "^1.2.0",
-    "cors": "^2.8.5",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
-    "express": "4.18.2",
+    "express": "^4.18.2",
     "express-rate-limit": "^8.3.1",
     "firebase-admin": "^13.7.0",
+    "https-proxy-agent": "^8.0.0",
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.1.0",
@@ -27,9 +30,25 @@
     "multer": "^2.1.1",
     "node-cache": "^5.1.2",
     "node-cron": "^4.2.1",
-    "puppeteer": "22.8.2"
+    "puppeteer": "^22.8.2",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tough-cookie": "^6.0.1"
   },
   "engines": {
     "node": "20.x"
-  }
+  },
+  "description": "��#\u0000 \u0000v\u0000a\u0000k\u0000i\u0000l\u0000d\u0000i\u0000s\u0000k\u0000-\u0000b\u0000a\u0000c\u0000k\u0000e\u0000n\u0000d\u0000\r\u0000 \u0000",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whitesheepenglish-hue/vakiltrack-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/whitesheepenglish-hue/vakiltrack-backend/issues"
+  },
+  "homepage": "https://github.com/whitesheepenglish-hue/vakiltrack-backend#readme"
 }
