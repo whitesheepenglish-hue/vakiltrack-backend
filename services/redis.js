@@ -35,6 +35,10 @@ function buildRedisConfig(url) {
     maxRetriesPerRequest: null,
     connectTimeout: 10_000,
     enableReadyCheck: true,
+    reconnectOnError(error) {
+      console.warn(`Redis reconnectOnError triggered: ${error?.message || error}`);
+      return true;
+    },
     tls: parsedUrl.isTLS ? {} : undefined,
     retryStrategy(times) {
       const retryDelay = Math.min(times * 1_000, MAX_RETRY_DELAY_MS);
@@ -85,7 +89,7 @@ function createRedisClient() {
   });
 
   client.on("error", (err) => {
-    console.error("Redis error:", err);
+    console.error("Redis error:", err?.message || err);
   });
 
   client.on("close", () => {

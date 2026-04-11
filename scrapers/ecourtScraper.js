@@ -1,31 +1,39 @@
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const axios = require("axios");
+const { wrapper } = require("axios-cookiejar-support");
+const cheerio = require("cheerio");
 const NodeCache = require("node-cache");
 const puppeteer = require("puppeteer");
-const { redis } = require("../services/redis");
+const { CookieJar } = require("tough-cookie");
+const { redis, waitForRedis } = require("../services/redis");
 
 const ECOURTS_URL = "https://services.ecourts.gov.in/ecourtindia_v6/";
+const SEARCH_ENDPOINT = "?p=cnr_status/searchByCNR/";
 const CAPTCHA_SELECTOR = "#captcha_image";
 const CNR_INPUT_SELECTOR = "#cino";
 const CAPTCHA_INPUT_SELECTOR = "#fcaptcha_code";
-const SEARCH_BUTTON_SELECTOR = "#searchbtn";
-const CAPTCHA_SESSION_TTL_MS = 5 * 60 * 1000;
+const CAPTCHA_SESSION_TTL_MS = 120 * 1000;
+const CAPTCHA_MAX_AGE_MS = 60 * 1000;
+const SCRAPE_TIMEOUT_MS = 12_000;
 const MAX_PAGES = Number(process.env.MAX_PAGES || 10);
 const PAGE_WAIT_MS = 100;
 const BROWSER_RESTART_INTERVAL_MS = 1000 * 60 * 10;
-const PAGE_LOAD_TIMEOUT = 60000;
-const CAPTCHA_LOAD_TIMEOUT = 30000;
-const captchaPages = new Map();
-const captchaCache = new NodeCache({ stdTTL: 60 });
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const PAGE_LOAD_TIMEOUT = 60_000;
+const CAPTCHA_LOAD_TIMEOUT = 30_000;
 const DEFAULT_RETRY_COUNT = 3;
+const DEFAULT_RETRYABLE_SUBMIT_ATTEMPTS = 2;
+const captchaCache = new NodeCache({ stdTTL: 60 });
+const localSessionCache = new NodeCache({ stdTTL: Math.ceil(CAPTCHA_SESSION_TTL_MS / 1000) });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 let sharedBrowser = null;
 let sharedBrowserPromise = null;
 let activePages = 0;
 
 const normalizeCaseNumber = (caseNumber) => String(caseNumber || "").trim().toUpperCase();
-const normalizeCaptcha = (captcha) => String(captcha || "").trim();
+const normalizeCaptcha = (captcha) => String(captcha || "").trim().toUpperCase();
 const getCaptchaCacheKey = (caseNumber) => `captcha:${normalizeCaseNumber(caseNumber) || "global"}`;
 const getCaptchaSessionKey = (sessionId) => `captcha:${sessionId}`;
 
@@ -48,6 +56,19 @@ const buildFallbackCase = (caseNumber, reason) =>
     source: "fallback",
     note: `Live scraping unavailable: ${reason}`,
   });
+
+function createAppError(message, options = {}) {
+  const error = new Error(message);
+  error.statusCode = options.statusCode || 400;
+  error.code = options.code || "REQUEST_FAILED";
+  error.retryable = options.retryable === true;
+  error.details = options.details || null;
+  return error;
+}
+
+function logScraperEvent(event, payload = {}) {
+  console.log(`[ecourts] ${event}`, payload);
+}
 
 async function retry(fn, retries = DEFAULT_RETRY_COUNT) {
   for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -89,93 +110,125 @@ async function closePage(page) {
   page.__vakiltrackReleased = true;
   releasePage();
   logScraperStats();
-  await page.close().catch(() => { });
-  page = null;
+  await page.close().catch(() => {});
 }
 
-async function getSessionMetadata(id) {
-  if (!id) {
-    return null;
-  }
-
+async function getRedisClient() {
   if (!redis) {
     return null;
   }
 
   try {
-    const rawSession = await redis.get(getCaptchaSessionKey(id));
-    return rawSession ? JSON.parse(rawSession) : null;
+    return await waitForRedis();
   } catch (error) {
-    console.warn("Redis get failed:", error.message);
+    console.warn("Redis unavailable for captcha session:", error?.message || error);
     return null;
   }
 }
 
-async function getSession(id) {
-  if (!id) {
+function sanitizeCookies(cookies) {
+  return Array.isArray(cookies)
+    ? cookies.map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path || "/",
+      expires: cookie.expires,
+      httpOnly: Boolean(cookie.httpOnly),
+      secure: Boolean(cookie.secure),
+      sameSite: cookie.sameSite,
+    }))
+    : [];
+}
+
+async function storeSessionMetadata(sessionId, metadata) {
+  const sessionKey = getCaptchaSessionKey(sessionId);
+  const client = await getRedisClient();
+
+  if (client) {
+    await client.set(sessionKey, JSON.stringify(metadata), "EX", 120);
+  }
+
+  localSessionCache.set(sessionKey, metadata, Math.ceil(CAPTCHA_SESSION_TTL_MS / 1000));
+}
+
+async function getSessionMetadata(sessionId) {
+  if (!sessionId) {
     return null;
   }
 
-  const session = await getSessionMetadata(id);
+  const sessionKey = getCaptchaSessionKey(sessionId);
+  const client = await getRedisClient();
+
+  if (client) {
+    try {
+      const rawSession = await client.get(sessionKey);
+      if (rawSession) {
+        return JSON.parse(rawSession);
+      }
+    } catch (error) {
+      console.warn("Redis get failed:", error?.message || error);
+    }
+  }
+
+  return localSessionCache.get(sessionKey) || null;
+}
+
+async function deleteSessionMetadata(sessionId) {
+  const sessionKey = getCaptchaSessionKey(sessionId);
+  const client = await getRedisClient();
+
+  if (client) {
+    try {
+      await client.del(sessionKey);
+    } catch (error) {
+      console.warn("Redis del failed:", error?.message || error);
+    }
+  }
+
+  localSessionCache.del(sessionKey);
+}
+
+async function getSession(sessionId) {
+  const session = await getSessionMetadata(sessionId);
   if (!session) {
     return null;
   }
 
-  if (session.expiresAt <= Date.now()) {
-    await closeCaptchaSession(id, session).catch(() => { });
+  const ageMs = Date.now() - Number(session.createdAt || 0);
+  if (
+    !session.createdAt ||
+    !session.expiresAt ||
+    session.expiresAt <= Date.now() ||
+    ageMs > CAPTCHA_MAX_AGE_MS
+  ) {
+    await closeCaptchaSession(sessionId, session).catch(() => {});
     return null;
   }
 
-  const localSession = captchaPages.get(id);
-  if (!localSession?.page) {
-    return {
-      ...session,
-      page: null,
-      timeoutHandle: null,
-    };
-  }
-
-  return {
-    ...session,
-    ...localSession,
-  };
+  return session;
 }
 
 async function closeCaptchaSession(sessionId, session = null) {
   const resolvedSession = session || await getSessionMetadata(sessionId).catch(() => null);
-  captchaPages.delete(sessionId);
-  
-  if (redis) {
-    try {
-      await redis.del(getCaptchaSessionKey(sessionId));
-    } catch (error) {
-      console.warn("Redis del failed:", error.message);
-    }
+  await deleteSessionMetadata(sessionId);
+
+  if (resolvedSession?.caseNumber) {
+    captchaCache.del(getCaptchaCacheKey(resolvedSession.caseNumber));
   }
-
-  if (!resolvedSession) {
-    return;
-  }
-
-  clearTimeout(resolvedSession.timeoutHandle);
-  captchaCache.del(getCaptchaCacheKey(resolvedSession.caseNumber));
-
-  await closePage(resolvedSession.page);
-}
-
-function scheduleSessionCleanup(sessionId) {
-  return setTimeout(() => {
-    closeCaptchaSession(sessionId).catch(() => { });
-  }, CAPTCHA_SESSION_TTL_MS);
 }
 
 async function captureCaptchaImage(page) {
-  await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: 30_000 });
+  await page.waitForSelector(CAPTCHA_SELECTOR, { timeout: CAPTCHA_LOAD_TIMEOUT });
   await sleep(1_000);
 
   const captchaElement = await page.$(CAPTCHA_SELECTOR);
   if (!captchaElement) {
-    throw new Error("Captcha image element not found on eCourts page.");
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+    });
   }
 
   return captchaElement.screenshot({ type: "png" });
@@ -208,19 +261,19 @@ function resolveChromeExecutablePath() {
   }
 
   if (process.platform === "win32") {
-    // Windows: Check common Chrome paths
     const windowsPaths = [
       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
       process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
     ].filter(Boolean);
-    
+
     for (const winPath of windowsPaths) {
       if (fs.existsSync(winPath)) {
         console.log(`Found Chrome at: ${winPath}`);
         return winPath;
       }
     }
+
     return null;
   }
 
@@ -270,7 +323,6 @@ async function getBrowser() {
   }
 
   if (!sharedBrowserPromise) {
-    // Reuse one Puppeteer browser across jobs; each request gets its own page.
     sharedBrowserPromise = launchBrowser()
       .then((browser) => {
         sharedBrowser = browser;
@@ -292,7 +344,7 @@ async function getBrowser() {
 
 setInterval(async () => {
   if (sharedBrowser) {
-    await sharedBrowser.close().catch(() => { });
+    await sharedBrowser.close().catch(() => {});
     sharedBrowser = null;
     sharedBrowserPromise = null;
   }
@@ -312,23 +364,26 @@ async function openEcourtsPage() {
     await page.setCacheEnabled(false);
     await page.setViewport({ width: 1366, height: 768 });
 
-    // Navigate with better timeout handling
     await page.goto(ECOURTS_URL, {
       waitUntil: "networkidle2",
       timeout: PAGE_LOAD_TIMEOUT,
     });
 
-    // Wait for critical elements with retries
     await Promise.all([
       page.waitForSelector(CAPTCHA_SELECTOR, { timeout: CAPTCHA_LOAD_TIMEOUT }),
-      page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15000 }),
-      page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15000 }),
+      page.waitForSelector(CNR_INPUT_SELECTOR, { timeout: 15_000 }),
+      page.waitForSelector(CAPTCHA_INPUT_SELECTOR, { timeout: 15_000 }),
     ]);
 
     return { browser, page };
   } catch (error) {
     await closePage(page);
-    throw new Error(`Failed to load eCourts page: ${error.message}`);
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+      details: { reason: error?.message || String(error) },
+    });
   }
 }
 
@@ -352,50 +407,44 @@ function extractValue(recordMap, labels) {
   return "";
 }
 
-async function extractPageState(page) {
-  return page.evaluate(() => {
-    const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
-    const visibleText = clean(document.body?.innerText || "");
+function buildPairsAndTablesFromHtml(html) {
+  const $ = cheerio.load(`<div id="vakiltrack-ecourts-root">${html || ""}</div>`);
+  const tables = [];
+  const pairs = {};
 
-    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], .modal, .swal2-popup'))
-      .map((node) => clean(node.innerText))
-      .filter(Boolean);
+  $("#vakiltrack-ecourts-root table").each((_, table) => {
+    const rows = [];
 
-    const tables = Array.from(document.querySelectorAll("table")).map((table) =>
-      Array.from(table.querySelectorAll("tr")).map((row) =>
-        Array.from(row.querySelectorAll("th,td"))
-          .map((cell) => clean(cell.innerText))
-          .filter(Boolean),
-      ).filter((row) => row.length > 0),
-    ).filter((table) => table.length > 0);
+    $(table).find("tr").each((__, row) => {
+      const cells = $(row).find("th, td").map((___, cell) => (
+        $(cell).text().replace(/\s+/g, " ").trim()
+      )).get().filter(Boolean);
 
-    const pairs = {};
-    for (const table of tables) {
-      for (const row of table) {
-        if (row.length === 2) {
-          pairs[row[0].toLowerCase()] = row[1];
-          continue;
-        }
+      if (cells.length > 0) {
+        rows.push(cells);
+      }
 
-        if (row.length > 2 && row.length % 2 === 0) {
-          for (let index = 0; index < row.length; index += 2) {
-            pairs[row[index].toLowerCase()] = row[index + 1];
-          }
+      if (cells.length === 2) {
+        pairs[cells[0].toLowerCase()] = cells[1];
+      } else if (cells.length > 2 && cells.length % 2 === 0) {
+        for (let index = 0; index < cells.length; index += 2) {
+          pairs[String(cells[index] || "").toLowerCase()] = cells[index + 1];
         }
       }
-    }
+    });
 
-    return {
-      visibleText,
-      dialogs,
-      tables,
-      pairs,
-      title: document.title,
-    };
+    if (rows.length > 0) {
+      tables.push(rows);
+    }
   });
+
+  const visibleText = $("#vakiltrack-ecourts-root").text().replace(/\s+/g, " ").trim();
+
+  return { pairs, tables, visibleText };
 }
 
-function buildCaseFromState(caseNumber, state) {
+function buildCaseFromHtml(caseNumber, html) {
+  const state = buildPairsAndTablesFromHtml(html);
   const petitioner = extractValue(state.pairs, [
     "petitioner and advocate",
     "petitioner",
@@ -424,10 +473,127 @@ function buildCaseFromState(caseNumber, state) {
     respondent,
     nextHearing,
     court,
-    pageTitle: state.title,
     rawText: state.visibleText,
     tables: state.tables,
   });
+}
+
+function buildAxiosCookieJar(cookies) {
+  const jar = new CookieJar();
+
+  for (const cookie of cookies || []) {
+    if (!cookie?.name || typeof cookie.value === "undefined") {
+      continue;
+    }
+
+    const domain = String(cookie.domain || "services.ecourts.gov.in").replace(/^\./, "");
+    const pathName = cookie.path || "/";
+    const cookieUrl = `https://${domain}${pathName}`;
+    const cookieParts = [
+      `${cookie.name}=${cookie.value}`,
+      `Domain=${domain}`,
+      `Path=${pathName}`,
+    ];
+
+    if (cookie.httpOnly) {
+      cookieParts.push("HttpOnly");
+    }
+
+    if (cookie.secure) {
+      cookieParts.push("Secure");
+    }
+
+    try {
+      jar.setCookieSync(cookieParts.join("; "), cookieUrl);
+    } catch (error) {
+      console.warn("Failed to restore cookie:", error?.message || error);
+    }
+  }
+
+  return jar;
+}
+
+function normalizeAjaxPayload(payload) {
+  if (payload && typeof payload === "object") {
+    return payload;
+  }
+
+  if (typeof payload !== "string") {
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+    });
+  }
+
+  const trimmedPayload = payload.trim();
+
+  try {
+    return JSON.parse(trimmedPayload);
+  } catch {
+    if (trimmedPayload.startsWith("<!DOCTYPE") || trimmedPayload.startsWith("<html")) {
+      throw createAppError("Court server error", {
+        statusCode: 502,
+        code: "COURT_SERVER_ERROR",
+        retryable: true,
+      });
+    }
+
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+    });
+  }
+}
+
+function detectNoData(payload, htmlText) {
+  const combinedText = [
+    payload?.errormsg,
+    payload?.casetype_list,
+    payload?.div_captcha,
+    htmlText,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return /record not found|no records? found|no data found|case code does not exists|case does not exists/.test(combinedText);
+}
+
+function validateCaptchaResponse(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+    });
+  }
+
+  const errorMessage = String(payload.errormsg || "").toLowerCase();
+  if (Number(payload.status) === 0 || errorMessage.includes("invalid captcha")) {
+    throw createAppError("Invalid captcha", {
+      statusCode: 400,
+      code: "INVALID_CAPTCHA",
+      retryable: false,
+    });
+  }
+
+  const html = String(payload.casetype_list || "");
+  if (!html.trim() && !payload.status && !payload.errormsg) {
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+    });
+  }
+
+  if (detectNoData(payload, html)) {
+    throw createAppError("No data found", {
+      statusCode: 404,
+      code: "NO_DATA_FOUND",
+      retryable: false,
+    });
+  }
+
+  return html;
 }
 
 async function createCaptchaSession(caseNumber) {
@@ -440,31 +606,32 @@ async function createCaptchaSession(caseNumber) {
     }
 
     const captchaImage = await captureCaptchaImage(page);
+    const cookies = sanitizeCookies(await page.cookies());
+    const userAgent = await page.evaluate(() => navigator.userAgent);
     const sessionId = randomUUID();
-    const expiresAt = Date.now() + CAPTCHA_SESSION_TTL_MS;
-    const timeoutHandle = scheduleSessionCleanup(sessionId);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + CAPTCHA_SESSION_TTL_MS;
 
-    captchaPages.set(sessionId, {
-      page,
-      timeoutHandle,
+    await storeSessionMetadata(sessionId, {
+      sessionId,
+      caseNumber: normalizedCaseNumber,
+      cookies,
+      headers: {
+        "User-Agent": userAgent,
+        Referer: ECOURTS_URL,
+      },
+      createdAt,
+      expiresAt,
     });
 
-    // Store session in Redis if available
-    if (redis) {
-      try {
-        await redis.set(
-          getCaptchaSessionKey(sessionId),
-          JSON.stringify({
-            caseNumber: normalizedCaseNumber,
-            expiresAt,
-          }),
-          "EX",
-          300,
-        );
-      } catch (error) {
-        console.warn("Redis set failed, using local-only session:", error.message);
-      }
-    }
+    logScraperEvent("captcha_session_created", {
+      sessionId,
+      caseNumber: normalizedCaseNumber,
+      hasCookies: cookies.length > 0,
+      cookieCount: cookies.length,
+      createdAt,
+      expiresAt,
+    });
 
     return {
       sessionId,
@@ -473,9 +640,8 @@ async function createCaptchaSession(caseNumber) {
       imageBuffer: captchaImage,
       imageBase64: captchaImage.toString("base64"),
     };
-  } catch (error) {
+  } finally {
     await closePage(page);
-    throw error;
   }
 }
 
@@ -501,11 +667,12 @@ async function getCachedCaptchaSession(caseNumber) {
 async function refreshCaptcha(sessionId) {
   const session = await getSession(sessionId);
   if (!session) {
-    throw new Error("Captcha session expired or was not found.");
+    throw createAppError("Captcha expired", {
+      statusCode: 410,
+      code: "CAPTCHA_EXPIRED",
+    });
   }
 
-  // Start over with a brand new eCourts page instead of trusting the current
-  // browser state after a failed captcha attempt.
   await closeCaptchaSession(sessionId, session);
   return createCaptchaSession(session.caseNumber);
 }
@@ -515,107 +682,198 @@ async function startScraper(caseNumber) {
   return session.imageBuffer;
 }
 
-async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
-  const session = await getSession(sessionId);
-  if (!session) {
-    throw new Error("Captcha session expired or was not found. Request a new captcha and try again.");
+async function performScrapeRequest(session, normalizedCaseNumber, normalizedCaptcha) {
+  const jar = buildAxiosCookieJar(session.cookies);
+  const client = wrapper(axios.create({
+    baseURL: ECOURTS_URL,
+    jar,
+    withCredentials: true,
+    timeout: SCRAPE_TIMEOUT_MS,
+    validateStatus: () => true,
+    headers: {
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "User-Agent": session.headers?.["User-Agent"] || session.headers?.userAgent,
+      Referer: session.headers?.Referer || ECOURTS_URL,
+      Origin: "https://services.ecourts.gov.in",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+  }));
+
+  const body = new URLSearchParams({
+    cino: normalizedCaseNumber,
+    fcaptcha_code: normalizedCaptcha,
+    ajax_req: "true",
+    app_token: "",
+  });
+
+  let response;
+
+  try {
+    response = await client.post(SEARCH_ENDPOINT, body.toString());
+  } catch (error) {
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+      details: { reason: error?.message || String(error) },
+    });
   }
 
-  if (!session.page) {
-    throw new Error("Captcha session is not available on this server. Request a new captcha and submit it to the same worker instance.");
+  if (response.status >= 500) {
+    throw createAppError("Court server error", {
+      statusCode: 502,
+      code: "COURT_SERVER_ERROR",
+      retryable: true,
+      details: { responseStatus: response.status },
+    });
+  }
+
+  const payload = normalizeAjaxPayload(response.data);
+
+  logScraperEvent("captcha_submit_response", {
+    sessionId: session.sessionId,
+    status: response.status,
+    hasCookies: Array.isArray(session.cookies) && session.cookies.length > 0,
+  });
+
+  return { response, payload };
+}
+
+async function submitCaptchaSolution({ sessionId, caseNumber, captcha }) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const normalizedCaptcha = normalizeCaptcha(captcha);
+  const session = await getSession(normalizedSessionId);
+
+  if (!session) {
+    throw createAppError("Captcha expired", {
+      statusCode: 410,
+      code: "CAPTCHA_EXPIRED",
+    });
   }
 
   const normalizedCaseNumber = normalizeCaseNumber(caseNumber || session.caseNumber);
-  const normalizedCaptcha = normalizeCaptcha(captcha);
-
   if (!normalizedCaseNumber) {
-    throw new Error("caseNumber is required");
+    throw createAppError("caseNumber is required", {
+      statusCode: 400,
+      code: "INVALID_INPUT",
+    });
+  }
+
+  if (!/^[A-Z0-9]{16}$/.test(normalizedCaseNumber)) {
+    throw createAppError("caseNumber must be a 16 character alphanumeric CNR", {
+      statusCode: 400,
+      code: "INVALID_INPUT",
+    });
   }
 
   if (!normalizedCaptcha) {
-    throw new Error("captcha is required");
+    throw createAppError("captcha is required", {
+      statusCode: 400,
+      code: "INVALID_INPUT",
+    });
+  }
+
+  if (!/^[A-Z0-9]{4,8}$/.test(normalizedCaptcha)) {
+    throw createAppError("captcha must be 4 to 8 alphanumeric characters", {
+      statusCode: 400,
+      code: "INVALID_INPUT",
+    });
   }
 
   session.caseNumber = normalizedCaseNumber;
-  
-  // Update session in Redis if available
-  if (redis) {
+  session.sessionId = normalizedSessionId;
+
+  await storeSessionMetadata(normalizedSessionId, {
+    ...session,
+    caseNumber: normalizedCaseNumber,
+  });
+
+  logScraperEvent("captcha_submit_start", {
+    sessionId: normalizedSessionId,
+    hasCookies: Array.isArray(session.cookies) && session.cookies.length > 0,
+    cookieCount: Array.isArray(session.cookies) ? session.cookies.length : 0,
+    captchaInput: normalizedCaptcha,
+    caseNumber: normalizedCaseNumber,
+  });
+
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= DEFAULT_RETRYABLE_SUBMIT_ATTEMPTS; attempt += 1) {
     try {
-      await redis.set(
-        getCaptchaSessionKey(sessionId),
-        JSON.stringify({
-          caseNumber: normalizedCaseNumber,
-          expiresAt: session.expiresAt,
-        }),
-        "EX",
-        300,
+      const { payload, response } = await performScrapeRequest(
+        session,
+        normalizedCaseNumber,
+        normalizedCaptcha,
       );
-    } catch (error) {
-      console.warn("Redis update failed:", error.message);
-    }
-  }
 
-  const { page } = session;
+      const html = validateCaptchaResponse(payload);
+      const result = buildCaseFromHtml(normalizedCaseNumber, html);
 
-  await clearAndType(page, CNR_INPUT_SELECTOR, normalizedCaseNumber);
-  await clearAndType(page, CAPTCHA_INPUT_SELECTOR, normalizedCaptcha);
-  try {
-    await page.click(SEARCH_BUTTON_SELECTOR);
-    await sleep(2_000);
+      if (!result.rawText && !result.tables?.length) {
+        throw createAppError("No data found", {
+          statusCode: 404,
+          code: "NO_DATA_FOUND",
+          retryable: false,
+        });
+      }
 
-    const state = await extractPageState(page);
-    const dialogText = state.dialogs.join(" ").toLowerCase();
-
-    if (dialogText.includes("invalid captcha")) {
-      const refreshed = await refreshCaptcha(sessionId);
-
-      return {
-        ok: false,
-        code: "INVALID_CAPTCHA",
-        message: "Invalid captcha. Please solve the refreshed captcha and try again.",
-        sessionId: refreshed.sessionId,
-        caseNumber: normalizedCaseNumber,
-        expiresAt: refreshed.expiresAt,
-        captchaImageBase64: refreshed.imageBase64,
-      };
-    }
-
-    if (dialogText.includes("record not found") || state.visibleText.toLowerCase().includes("record not found")) {
-      await closeCaptchaSession(sessionId);
+      await closeCaptchaSession(normalizedSessionId, session);
 
       return {
         ok: true,
-        code: "NOT_FOUND",
-        message: "No case record was found for that CNR number.",
-        case: buildResult(normalizedCaseNumber, {
-          court: "eCourts",
-          note: "No case record was found for that CNR number.",
-          rawText: state.visibleText,
-          tables: state.tables,
-        }),
+        code: "SUCCESS",
+        message: "Case data fetched from eCourts.",
+        responseStatus: response.status,
+        case: result,
       };
+    } catch (error) {
+      lastError = error;
+
+      logScraperEvent("captcha_submit_error", {
+        sessionId: normalizedSessionId,
+        attempt,
+        statusCode: error?.statusCode || 500,
+        error: error?.message || String(error),
+      });
+
+      if (error?.code === "INVALID_CAPTCHA") {
+        await closeCaptchaSession(normalizedSessionId, session).catch(() => {});
+        throw error;
+      }
+
+      if (!error?.retryable || attempt >= DEFAULT_RETRYABLE_SUBMIT_ATTEMPTS) {
+        await closeCaptchaSession(normalizedSessionId, session).catch(() => {});
+        throw error;
+      }
+
+      await sleep(500);
     }
-
-    const result = buildCaseFromState(normalizedCaseNumber, state);
-    await closeCaptchaSession(sessionId);
-
-    return {
-      ok: true,
-      code: "SUCCESS",
-      message: "Case data fetched from eCourts.",
-      case: result,
-    };
-  } catch (error) {
-    await closeCaptchaSession(sessionId).catch(() => { });
-    throw error;
   }
+
+  await closeCaptchaSession(normalizedSessionId, session).catch(() => {});
+  throw lastError || createAppError("Court server error", {
+    statusCode: 502,
+    code: "COURT_SERVER_ERROR",
+    retryable: true,
+  });
 }
 
 async function scrapeCase(caseNumber) {
   const normalizedCaseNumber = normalizeCaseNumber(caseNumber);
 
   if (!normalizedCaseNumber) {
-    throw new Error("caseNumber is required");
+    throw createAppError("caseNumber is required", {
+      statusCode: 400,
+      code: "INVALID_INPUT",
+    });
+  }
+
+  if (!/^[A-Z0-9]{16}$/.test(normalizedCaseNumber)) {
+    throw createAppError("caseNumber must be a 16 character alphanumeric CNR", {
+      statusCode: 400,
+      code: "INVALID_INPUT",
+    });
   }
 
   try {
@@ -644,5 +902,6 @@ scrapeCase.closeCaptchaSession = closeCaptchaSession;
 scrapeCase.retry = retry;
 scrapeCase.withRetry = retry;
 scrapeCase.getBrowser = getBrowser;
+scrapeCase.createAppError = createAppError;
 
 module.exports = scrapeCase;
